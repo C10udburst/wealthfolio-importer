@@ -6,7 +6,7 @@ export abstract class BaseImporter {
   abstract label: string;
   abstract supportedExtensions: string[];
   abstract parse(file: File, options: ParseOptions): Promise<ImportParseResult>;
-  detect?: (file: File) => Promise<ImportDetection | null>;
+  detect?(file: File): Promise<ImportDetection | null>;
   fileNamePattern?: RegExp;
 
   protected finalize(

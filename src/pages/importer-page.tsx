@@ -8,6 +8,12 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
   Icons,
   Input,
   Page,
@@ -21,6 +27,8 @@ import {
   SelectItem,
   SelectTrigger,
   SelectValue,
+  formatAmount,
+  worldCurrencies,
   Table,
   TableBody,
   TableCell,
@@ -74,11 +82,6 @@ const CASH_LIKE_ACTIVITY_TYPES = new Set([
   'DIVIDEND',
 ]);
 const FEE_ACTIVITY_TYPES = new Set(['FEE', 'TAX']);
-const TABLE_INPUT_CLASS =
-  'h-8 border-0 bg-transparent px-2 text-xs shadow-none focus-visible:ring-1 focus-visible:ring-muted-foreground/30';
-const TABLE_INPUT_RIGHT_CLASS = `${TABLE_INPUT_CLASS} text-right`;
-const TABLE_SELECT_TRIGGER_CLASS =
-  'h-8 border-0 bg-transparent px-2 text-xs shadow-none focus:ring-1 focus:ring-muted-foreground/30';
 
 const formatBytes = (bytes: number) => {
   if (!Number.isFinite(bytes)) {
@@ -139,6 +142,483 @@ const normalizeImportNumber = (value: number | undefined) => {
     return value;
   }
   return Number.isFinite(value) ? Math.abs(value) : value;
+};
+
+const cn = (...values: Array<string | false | null | undefined>) =>
+  values.filter(Boolean).join(' ');
+
+const getNumericCellValue = (value: number | undefined) => {
+  if (value === undefined || Number.isNaN(value)) {
+    return '';
+  }
+  return String(value);
+};
+
+const formatDateTimeDisplay = (value: Date | string | undefined) => {
+  if (!value) {
+    return '';
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.valueOf())) {
+    return '';
+  }
+  return date.toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+};
+
+const formatAmountDisplay = (
+  value: number | undefined,
+  currency: string | null,
+) => {
+  if (value === undefined || Number.isNaN(value)) {
+    return '';
+  }
+  const resolvedCurrency = currency || 'USD';
+  try {
+    return formatAmount(value, resolvedCurrency, false);
+  } catch {
+    return '';
+  }
+};
+
+type EditableField =
+  | 'activityType'
+  | 'date'
+  | 'symbol'
+  | 'quantity'
+  | 'unitPrice'
+  | 'amount'
+  | 'fee'
+  | 'currency'
+  | 'comment';
+
+const EDITABLE_FIELDS: EditableField[] = [
+  'activityType',
+  'date',
+  'symbol',
+  'quantity',
+  'unitPrice',
+  'amount',
+  'fee',
+  'currency',
+  'comment',
+];
+
+interface CellCoordinate {
+  rowId: string;
+  field: EditableField;
+}
+
+interface EditableCellProps {
+  value: string;
+  displayValue?: string;
+  onChange: (value: string) => void;
+  onFocus?: () => void;
+  onNavigate?: (direction: 'up' | 'down' | 'left' | 'right') => void;
+  isFocused?: boolean;
+  type?: 'text' | 'number' | 'datetime-local';
+  step?: string;
+  inputMode?: 'text' | 'decimal' | 'numeric';
+  placeholder?: string;
+  className?: string;
+  disabled?: boolean;
+}
+
+const EditableCell = ({
+  value,
+  displayValue,
+  onChange,
+  onFocus,
+  onNavigate,
+  isFocused = false,
+  type = 'text',
+  step,
+  inputMode = 'text',
+  placeholder,
+  className,
+  disabled = false,
+}: EditableCellProps) => {
+  const [isEditing, setIsEditing] = useState(false);
+  const [editValue, setEditValue] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const cellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setEditValue(value);
+  }, [value]);
+
+  useEffect(() => {
+    if (disabled) {
+      setIsEditing(false);
+    }
+  }, [disabled]);
+
+  useEffect(() => {
+    if (isFocused && !isEditing && cellRef.current) {
+      cellRef.current.focus();
+    }
+  }, [isFocused, isEditing]);
+
+  useEffect(() => {
+    if (isEditing && inputRef.current) {
+      inputRef.current.focus();
+      inputRef.current.select();
+    }
+  }, [isEditing]);
+
+  const handleSave = () => {
+    onChange(editValue);
+    setIsEditing(false);
+  };
+
+  const handleInputChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const nextValue = event.target.value;
+    if (type === 'number') {
+      if (nextValue === '' || nextValue === '-' || /^-?\d*\.?\d*$/.test(nextValue)) {
+        setEditValue(nextValue);
+      }
+    } else {
+      setEditValue(nextValue);
+    }
+  };
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (disabled) {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onNavigate?.('up');
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onNavigate?.('down');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onNavigate?.('left');
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onNavigate?.('right');
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        onNavigate?.(event.shiftKey ? 'left' : 'right');
+      }
+      return;
+    }
+
+    if (isEditing) {
+      if (type === 'number') {
+        const allowedKeys = [
+          'Backspace',
+          'Delete',
+          'Tab',
+          'Escape',
+          'Enter',
+          'ArrowLeft',
+          'ArrowRight',
+          'ArrowUp',
+          'ArrowDown',
+          '.',
+          '-',
+          '0',
+          '1',
+          '2',
+          '3',
+          '4',
+          '5',
+          '6',
+          '7',
+          '8',
+          '9',
+        ];
+
+        if (event.ctrlKey || event.metaKey) {
+          return;
+        }
+
+        if (!allowedKeys.includes(event.key)) {
+          event.preventDefault();
+          return;
+        }
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        handleSave();
+        onNavigate?.('down');
+      } else if (event.key === 'Escape') {
+        setEditValue(value);
+        setIsEditing(false);
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        handleSave();
+        onNavigate?.(event.shiftKey ? 'left' : 'right');
+      }
+    } else {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+        event.preventDefault();
+        setIsEditing(true);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onNavigate?.('up');
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onNavigate?.('down');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onNavigate?.('left');
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onNavigate?.('right');
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        onNavigate?.(event.shiftKey ? 'left' : 'right');
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        if (type === 'number') {
+          if (/^[0-9.-]$/.test(event.key)) {
+            setEditValue(event.key);
+            setIsEditing(true);
+          }
+        } else {
+          setEditValue(event.key);
+          setIsEditing(true);
+        }
+      }
+    }
+  };
+
+  const handleClick = () => {
+    if (disabled) {
+      onFocus?.();
+      return;
+    }
+    onFocus?.();
+    setIsEditing(true);
+  };
+
+  const handleCellFocus = () => {
+    onFocus?.();
+  };
+
+  if (isEditing) {
+    return (
+      <Input
+        ref={inputRef}
+        value={editValue}
+        onChange={handleInputChange}
+        onBlur={handleSave}
+        onKeyDown={handleKeyDown}
+        type={type}
+        step={step}
+        inputMode={inputMode}
+        className={cn(
+          'h-full w-full rounded-none border-0 px-2 py-1.5 text-xs shadow-none focus-visible:ring-2',
+          className,
+        )}
+      />
+    );
+  }
+
+  const content = displayValue ?? value;
+
+  return (
+    <div
+      ref={cellRef}
+      tabIndex={0}
+      onClick={handleClick}
+      onFocus={handleCellFocus}
+      onKeyDown={handleKeyDown}
+      className={cn(
+        'flex h-full w-full items-center px-2 py-1.5 text-xs transition-colors outline-none',
+        disabled ? 'text-muted-foreground cursor-not-allowed' : 'cursor-cell',
+        isFocused && 'ring-primary ring-2 ring-inset',
+        !content && 'text-muted-foreground',
+        className,
+      )}
+    >
+      <span className="truncate">{content || placeholder || ''}</span>
+    </div>
+  );
+};
+
+interface SelectOption {
+  value: string;
+  label: string;
+  searchValue?: string;
+}
+
+interface SelectCellProps {
+  value: string;
+  options: SelectOption[];
+  onChange: (value: string) => void;
+  onFocus?: () => void;
+  onNavigate?: (direction: 'up' | 'down' | 'left' | 'right') => void;
+  isFocused?: boolean;
+  renderValue?: (value: string) => React.ReactNode;
+  className?: string;
+  disabled?: boolean;
+}
+
+const SelectCell = ({
+  value,
+  options,
+  onChange,
+  onFocus,
+  onNavigate,
+  isFocused = false,
+  renderValue,
+  className,
+  disabled = false,
+}: SelectCellProps) => {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const cellRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (isFocused && !open && cellRef.current) {
+      cellRef.current.focus();
+    }
+  }, [isFocused, open]);
+
+  const handleSelect = (option: SelectOption) => {
+    onChange(option.value);
+    setOpen(false);
+    setSearch('');
+    setTimeout(() => {
+      cellRef.current?.focus();
+    }, 0);
+  };
+
+  const selectedOption = options.find((option) => option.value === value);
+
+  const handleKeyDown = (event: React.KeyboardEvent) => {
+    if (disabled) {
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onNavigate?.('up');
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onNavigate?.('down');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onNavigate?.('left');
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onNavigate?.('right');
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        onNavigate?.(event.shiftKey ? 'left' : 'right');
+      }
+      return;
+    }
+
+    if (open) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setOpen(false);
+        setSearch('');
+        cellRef.current?.focus();
+      }
+    } else {
+      if (event.key === 'Enter' || event.key === ' ' || event.key === 'F2') {
+        event.preventDefault();
+        setOpen(true);
+      } else if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        onNavigate?.('up');
+      } else if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        onNavigate?.('down');
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        onNavigate?.('left');
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        onNavigate?.('right');
+      } else if (event.key === 'Tab') {
+        event.preventDefault();
+        onNavigate?.(event.shiftKey ? 'left' : 'right');
+      } else if (event.key.length === 1 && !event.ctrlKey && !event.metaKey) {
+        setSearch(event.key);
+        setOpen(true);
+      }
+    }
+  };
+
+  const handleClick = () => {
+    if (disabled) {
+      onFocus?.();
+      return;
+    }
+    onFocus?.();
+    setOpen(true);
+  };
+
+  const handleCellFocus = () => {
+    onFocus?.();
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <div
+          ref={cellRef}
+          tabIndex={0}
+          onClick={handleClick}
+          onFocus={handleCellFocus}
+          onKeyDown={handleKeyDown}
+          className={cn(
+            'flex h-full w-full items-center justify-between gap-2 px-2 py-1.5 text-xs transition-colors outline-none',
+            disabled ? 'text-muted-foreground cursor-not-allowed' : 'cursor-cell',
+            isFocused && 'ring-primary ring-2 ring-inset',
+            !value && !selectedOption && 'text-muted-foreground',
+            className,
+          )}
+        >
+          <span className="flex-1">
+            {renderValue ? renderValue(value) : selectedOption?.label ?? value}
+          </span>
+          <Icons.ChevronDown className="h-3 w-3 shrink-0 opacity-50" />
+        </div>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-[220px] p-0 text-xs"
+        align="start"
+        onOpenAutoFocus={(event) => event.preventDefault()}
+      >
+        <Command>
+          <CommandInput
+            placeholder="Search..."
+            value={search}
+            onValueChange={setSearch}
+            autoFocus
+          />
+          <CommandList>
+            <CommandEmpty>No results found.</CommandEmpty>
+            <CommandGroup>
+              {options.map((option) => (
+                <CommandItem
+                  key={option.value}
+                  value={`${option.value} ${option.searchValue ?? option.label ?? option.value}`}
+                  onSelect={() => handleSelect(option)}
+                >
+                  <Icons.Check
+                    className={cn(
+                      'mr-2 h-3.5 w-3.5',
+                      value === option.value ? 'opacity-100' : 'opacity-0',
+                    )}
+                  />
+                  <span className="text-xs">{option.label}</span>
+                </CommandItem>
+              ))}
+            </CommandGroup>
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
 };
 
 const normalizeKeyDate = (value: Date | string | undefined) => {
@@ -273,6 +753,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
   const [searchText, setSearchText] = useState('');
   const [pageIndex, setPageIndex] = useState(0);
   const [pageSize, setPageSize] = useState(PAGE_SIZE_OPTIONS[0]);
+  const [focusedCell, setFocusedCell] = useState<CellCoordinate | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const extension = file ? getFileExtension(file) : null;
@@ -284,6 +765,53 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     () => accounts.find((account) => account.id === selectedAccountId) ?? null,
     [accounts, selectedAccountId],
   );
+  const activityTypeOptions = useMemo(
+    () =>
+      ACTIVITY_TYPE_OPTIONS.map((type) => ({
+        value: type,
+        label: type,
+        searchValue: type,
+      })),
+    [],
+  );
+  const currencyOptions = useMemo(() => {
+    const entries = new Map<string, string>();
+
+    worldCurrencies.forEach(({ value, label }) => {
+      entries.set(value, label);
+    });
+
+    accounts.forEach((account) => {
+      if (account.currency) {
+        entries.set(
+          account.currency,
+          entries.get(account.currency) ?? account.currency,
+        );
+      }
+    });
+
+    activities.forEach((activity) => {
+      const currency =
+        typeof activity.currency === 'string' ? activity.currency.trim() : '';
+      if (currency) {
+        const normalized = currency.toUpperCase();
+        entries.set(normalized, entries.get(normalized) ?? normalized);
+      }
+    });
+
+    if (selectedAccount?.currency) {
+      entries.set(
+        selectedAccount.currency,
+        entries.get(selectedAccount.currency) ?? selectedAccount.currency,
+      );
+    }
+
+    return Array.from(entries.entries()).map(([value, label]) => ({
+      value,
+      label,
+      searchValue: label,
+    }));
+  }, [accounts, activities, selectedAccount]);
   const filteredActivities = useMemo(() => {
     const query = searchText.trim().toLowerCase();
     const indexed = activities.map((activity, index) => ({ activity, index }));
@@ -311,6 +839,14 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     const startIndex = pageIndex * pageSize;
     return filteredActivities.slice(startIndex, startIndex + pageSize);
   }, [filteredActivities, pageIndex, pageSize]);
+  const rowIdOrder = useMemo(
+    () => paginatedActivities.map(({ index }) => String(index)),
+    [paginatedActivities],
+  );
+  const rowIndexLookup = useMemo(
+    () => new Map(rowIdOrder.map((rowId, index) => [rowId, index])),
+    [rowIdOrder],
+  );
   const activityStats = useMemo(() => {
     const fallbackCurrency = selectedAccount?.currency ?? null;
     let invalidCount = 0;
@@ -481,6 +1017,12 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     setPageIndex(0);
   }, [searchText]);
 
+  useEffect(() => {
+    if (focusedCell && !rowIndexLookup.has(focusedCell.rowId)) {
+      setFocusedCell(null);
+    }
+  }, [focusedCell, rowIndexLookup]);
+
   const handleFileSelect = (selectedFile: File | null) => {
     if (!selectedFile) {
       setFile(null);
@@ -569,6 +1111,55 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
       const next = [...prev];
       next[index] = { ...next[index], [field]: value };
       return next;
+    });
+  };
+
+  const focusCell = (rowId: string, field: EditableField) => {
+    setFocusedCell({ rowId, field });
+  };
+
+  const handleCellNavigation = (direction: 'up' | 'down' | 'left' | 'right') => {
+    setFocusedCell((current) => {
+      if (!current) {
+        return current;
+      }
+      const rowIndex = rowIndexLookup.get(current.rowId);
+      const fieldIndex = EDITABLE_FIELDS.indexOf(current.field);
+      if (rowIndex === undefined || fieldIndex === -1) {
+        return current;
+      }
+
+      let nextRowIndex = rowIndex;
+      let nextFieldIndex = fieldIndex;
+
+      switch (direction) {
+        case 'up':
+          nextRowIndex = Math.max(0, rowIndex - 1);
+          break;
+        case 'down':
+          nextRowIndex = Math.min(rowIdOrder.length - 1, rowIndex + 1);
+          break;
+        case 'left':
+          nextFieldIndex = Math.max(0, fieldIndex - 1);
+          break;
+        case 'right':
+          nextFieldIndex = Math.min(EDITABLE_FIELDS.length - 1, fieldIndex + 1);
+          break;
+        default:
+          break;
+      }
+
+      const nextRowId = rowIdOrder[nextRowIndex];
+      const nextField = EDITABLE_FIELDS[nextFieldIndex];
+      if (!nextRowId || !nextField) {
+        return current;
+      }
+
+      if (nextRowId === current.rowId && nextField === current.field) {
+        return current;
+      }
+
+      return { rowId: nextRowId, field: nextField };
     });
   };
 
@@ -1107,25 +1698,44 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                             </Button>
                           </div>
                         </div>
-                        <div className="rounded-md border overflow-x-auto">
-                          <Table className="min-w-[1120px] text-xs">
+                        <div className="bg-background min-h-[320px] flex-1 overflow-auto rounded-lg border">
+                          <Table className="min-w-[1080px] text-xs">
                             <TableHeader>
-                              <TableRow>
-                                <TableHead className="w-[90px] px-2">Status</TableHead>
-                                <TableHead className="w-[50px] px-2 text-center">
-                                  <span className="sr-only">Actions</span>
+                              <TableRow className="hover:bg-transparent">
+                                <TableHead className="bg-muted/30 h-9 w-12 border-r px-0 py-0 text-center">
+                                  <span className="sr-only">Delete</span>
                                 </TableHead>
-                                <TableHead className="w-[170px] px-2">Date</TableHead>
-                                <TableHead className="w-[140px] px-2">Type</TableHead>
-                                <TableHead className="px-2 min-w-[120px]">Symbol</TableHead>
-                                <TableHead className="px-2 text-right">Amount</TableHead>
-                                <TableHead className="w-[90px] px-2">
+                                <TableHead className="bg-muted/30 h-9 w-[110px] border-r px-2 py-1.5 text-xs font-semibold">
+                                  Status
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 w-[140px] border-r px-2 py-1.5 text-xs font-semibold">
+                                  Type
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 w-[170px] border-r px-2 py-1.5 text-xs font-semibold">
+                                  Date &amp; Time
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 min-w-[120px] border-r px-2 py-1.5 text-xs font-semibold">
+                                  Symbol
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 border-r px-2 py-1.5 text-right text-xs font-semibold">
+                                  Quantity
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 border-r px-2 py-1.5 text-right text-xs font-semibold">
+                                  Unit Price
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 border-r px-2 py-1.5 text-right text-xs font-semibold">
+                                  Amount
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 border-r px-2 py-1.5 text-right text-xs font-semibold">
+                                  Fee
+                                </TableHead>
+                                <TableHead className="bg-muted/30 h-9 w-[110px] border-r px-2 py-1.5 text-xs font-semibold">
                                   <Popover>
                                     <PopoverTrigger asChild>
                                       <Button
                                         variant="ghost"
                                         size="sm"
-                                        className="h-6 px-1 text-xs text-muted-foreground"
+                                        className="data-[state=open]:bg-accent h-7 w-full justify-start rounded-sm px-1 text-xs font-semibold"
                                       >
                                         Currency
                                         <Icons.ChevronsUpDown className="ml-1 h-3 w-3 opacity-60" />
@@ -1147,30 +1757,24 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                                     </PopoverContent>
                                   </Popover>
                                 </TableHead>
-                                <TableHead className="px-2 text-right">Quantity</TableHead>
-                                <TableHead className="px-2 text-right">Unit Price</TableHead>
-                                <TableHead className="px-2 text-right">Fee</TableHead>
-                                <TableHead className="px-2 min-w-[240px]">Comment</TableHead>
+                                <TableHead className="bg-muted/30 h-9 min-w-[240px] px-2 py-1.5 text-xs font-semibold">
+                                  Comment
+                                </TableHead>
                               </TableRow>
                             </TableHeader>
                             <TableBody>
                               {paginatedActivities.map(({ activity, index }) => {
                                 const activityIndex = index;
+                                const rowId = String(activityIndex);
                                 const status = getActivityIssues(activity, fallbackCurrency);
                                 return (
                                   <TableRow
                                     key={`${activityIndex}-${activity.lineNumber ?? ''}`}
-                                    className={status.isValid ? undefined : 'bg-destructive/5'}
+                                    className={`group hover:bg-muted/40 ${
+                                      status.isValid ? '' : 'bg-destructive/5'
+                                    }`}
                                   >
-                                    <TableCell className="px-2 py-1">
-                                      <Badge
-                                        variant={status.isValid ? 'secondary' : 'destructive'}
-                                        title={status.issues.join(' | ')}
-                                      >
-                                        {status.isValid ? 'Ready' : 'Review'}
-                                      </Badge>
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1 text-center">
+                                    <TableCell className="h-9 w-12 border-r px-0 py-0 text-center">
                                       <Button
                                         variant="ghost"
                                         size="icon"
@@ -1180,125 +1784,231 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                                         <Icons.Trash className="h-4 w-4" />
                                       </Button>
                                     </TableCell>
-                                    <TableCell className="px-2 py-1">
-                                      <Input
-                                        type="datetime-local"
+                                    <TableCell className="h-9 border-r px-2 py-1.5">
+                                      <div
+                                        className="flex items-center gap-2 text-xs"
+                                        title={status.issues.join(' | ')}
+                                      >
+                                        <span
+                                          className={cn(
+                                            'flex h-5 w-5 items-center justify-center rounded-full',
+                                            status.isValid
+                                              ? 'bg-emerald-500/15 text-emerald-600'
+                                              : 'bg-destructive/20 text-destructive',
+                                          )}
+                                        >
+                                          {status.isValid ? (
+                                            <Icons.CheckCircle className="h-3.5 w-3.5" />
+                                          ) : (
+                                            <Icons.XCircle className="h-3.5 w-3.5" />
+                                          )}
+                                        </span>
+                                        <span className="text-muted-foreground">
+                                          {status.isValid ? 'Ready' : 'Review'}
+                                        </span>
+                                      </div>
+                                    </TableCell>
+                                    <TableCell className="h-9 border-r px-0 py-0">
+                                      <SelectCell
+                                        value={activity.activityType ?? ''}
+                                        options={activityTypeOptions}
+                                        onChange={(value) =>
+                                          updateActivityField(
+                                            activityIndex,
+                                            'activityType',
+                                            value as ActivityImport['activityType'],
+                                          )
+                                        }
+                                        onFocus={() => focusCell(rowId, 'activityType')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'activityType'
+                                        }
+                                        renderValue={(value) => (
+                                          <Badge variant="outline" className="font-mono text-[11px]">
+                                            {value || 'Type'}
+                                          </Badge>
+                                        )}
+                                      />
+                                    </TableCell>
+                                    <TableCell className="h-9 border-r px-0 py-0">
+                                      <EditableCell
                                         value={formatInputDateTime(activity.date)}
-                                        className={TABLE_INPUT_CLASS}
-                                        onChange={(event) =>
+                                        displayValue={formatDateTimeDisplay(activity.date)}
+                                        onChange={(value) =>
                                           updateActivityField(
                                             activityIndex,
                                             'date',
-                                            parseInputDateTime(event.target.value),
+                                            parseInputDateTime(value),
                                           )
                                         }
+                                        onFocus={() => focusCell(rowId, 'date')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'date'
+                                        }
+                                        type="datetime-local"
+                                        className="font-mono"
                                       />
                                     </TableCell>
-                                    <TableCell className="px-2 py-1">
-                                      <Select
-                                        value={activity.activityType}
-                                        onValueChange={(value) =>
-                                          updateActivityField(activityIndex, 'activityType', value as ActivityImport['activityType'])
-                                        }
-                                      >
-                                        <SelectTrigger className={TABLE_SELECT_TRIGGER_CLASS}>
-                                          <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                          {ACTIVITY_TYPE_OPTIONS.map((type) => (
-                                            <SelectItem key={type} value={type}>
-                                              {type}
-                                            </SelectItem>
-                                          ))}
-                                        </SelectContent>
-                                      </Select>
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1 min-w-[120px]">
-                                      <Input
+                                    <TableCell className="h-9 border-r px-0 py-0 min-w-[120px]">
+                                      <EditableCell
                                         value={activity.symbol ?? ''}
-                                        className={TABLE_INPUT_CLASS}
-                                        onChange={(event) =>
-                                          updateActivityField(activityIndex, 'symbol', event.target.value)
+                                        onChange={(value) =>
+                                          updateActivityField(activityIndex, 'symbol', value)
                                         }
+                                        onFocus={() => focusCell(rowId, 'symbol')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'symbol'
+                                        }
+                                        className="font-mono uppercase text-xs font-semibold"
                                       />
                                     </TableCell>
-                                    <TableCell className="px-2 py-1 text-right">
-                                      <Input
-                                        type="number"
-                                        step="0.01"
-                                        value={activity.amount ?? ''}
-                                        className={TABLE_INPUT_RIGHT_CLASS}
-                                        onChange={(event) =>
-                                          updateActivityField(
-                                            activityIndex,
-                                            'amount',
-                                            parseNumberValue(event.target.value),
-                                          )
-                                        }
-                                      />
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1">
-                                      <Input
-                                        value={activity.currency ?? ''}
-                                        placeholder={fallbackCurrency ?? ''}
-                                        className={TABLE_INPUT_CLASS}
-                                        onChange={(event) =>
-                                          updateActivityField(activityIndex, 'currency', event.target.value)
-                                        }
-                                      />
-                                    </TableCell>
-                                    <TableCell className="px-2 py-1 text-right">
-                                      <Input
-                                        type="number"
-                                        step="0.0001"
-                                        value={activity.quantity ?? ''}
-                                        className={TABLE_INPUT_RIGHT_CLASS}
-                                        onChange={(event) =>
+                                    <TableCell className="h-9 border-r px-0 py-0 text-right">
+                                      <EditableCell
+                                        value={getNumericCellValue(activity.quantity)}
+                                        onChange={(value) =>
                                           updateActivityField(
                                             activityIndex,
                                             'quantity',
-                                            parseNumberValue(event.target.value),
+                                            parseNumberValue(value),
                                           )
                                         }
+                                        onFocus={() => focusCell(rowId, 'quantity')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'quantity'
+                                        }
+                                        type="number"
+                                        inputMode="decimal"
+                                        className="justify-end text-right font-mono tabular-nums"
                                       />
                                     </TableCell>
-                                    <TableCell className="px-2 py-1 text-right">
-                                      <Input
-                                        type="number"
-                                        step="0.0001"
-                                        value={activity.unitPrice ?? ''}
-                                        className={TABLE_INPUT_RIGHT_CLASS}
-                                        onChange={(event) =>
+                                    <TableCell className="h-9 border-r px-0 py-0 text-right">
+                                      <EditableCell
+                                        value={getNumericCellValue(activity.unitPrice)}
+                                        displayValue={formatAmountDisplay(
+                                          activity.unitPrice,
+                                          activity.currency ?? fallbackCurrency,
+                                        )}
+                                        onChange={(value) =>
                                           updateActivityField(
                                             activityIndex,
                                             'unitPrice',
-                                            parseNumberValue(event.target.value),
+                                            parseNumberValue(value),
                                           )
                                         }
+                                        onFocus={() => focusCell(rowId, 'unitPrice')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'unitPrice'
+                                        }
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        className="justify-end text-right font-mono tabular-nums"
                                       />
                                     </TableCell>
-                                    <TableCell className="px-2 py-1 text-right">
-                                      <Input
+                                    <TableCell className="h-9 border-r px-0 py-0 text-right">
+                                      <EditableCell
+                                        value={getNumericCellValue(activity.amount)}
+                                        displayValue={formatAmountDisplay(
+                                          activity.amount,
+                                          activity.currency ?? fallbackCurrency,
+                                        )}
+                                        onChange={(value) =>
+                                          updateActivityField(
+                                            activityIndex,
+                                            'amount',
+                                            parseNumberValue(value),
+                                          )
+                                        }
+                                        onFocus={() => focusCell(rowId, 'amount')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'amount'
+                                        }
                                         type="number"
+                                        inputMode="decimal"
                                         step="0.01"
-                                        value={activity.fee ?? ''}
-                                        className={TABLE_INPUT_RIGHT_CLASS}
-                                        onChange={(event) =>
+                                        className="justify-end text-right font-mono tabular-nums"
+                                      />
+                                    </TableCell>
+                                    <TableCell className="h-9 border-r px-0 py-0 text-right">
+                                      <EditableCell
+                                        value={getNumericCellValue(activity.fee)}
+                                        displayValue={formatAmountDisplay(
+                                          activity.fee,
+                                          activity.currency ?? fallbackCurrency,
+                                        )}
+                                        onChange={(value) =>
                                           updateActivityField(
                                             activityIndex,
                                             'fee',
-                                            parseNumberValue(event.target.value),
+                                            parseNumberValue(value),
                                           )
                                         }
+                                        onFocus={() => focusCell(rowId, 'fee')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'fee'
+                                        }
+                                        type="number"
+                                        inputMode="decimal"
+                                        step="0.01"
+                                        className="justify-end text-right font-mono tabular-nums"
                                       />
                                     </TableCell>
-                                    <TableCell className="px-2 py-1 min-w-[240px]">
-                                      <Input
-                                        value={activity.comment ?? ''}
-                                        className={TABLE_INPUT_CLASS}
-                                        onChange={(event) =>
-                                          updateActivityField(activityIndex, 'comment', event.target.value)
+                                    <TableCell className="h-9 border-r px-0 py-0">
+                                      <SelectCell
+                                        value={activity.currency ?? ''}
+                                        options={currencyOptions}
+                                        onChange={(value) =>
+                                          updateActivityField(
+                                            activityIndex,
+                                            'currency',
+                                            value.toUpperCase(),
+                                          )
                                         }
+                                        onFocus={() => focusCell(rowId, 'currency')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'currency'
+                                        }
+                                        renderValue={(value) => (
+                                          <span
+                                            className={cn(
+                                              'font-mono text-xs',
+                                              value ? '' : 'text-muted-foreground',
+                                            )}
+                                          >
+                                            {value || fallbackCurrency || ''}
+                                          </span>
+                                        )}
+                                      />
+                                    </TableCell>
+                                    <TableCell className="h-9 px-0 py-0 min-w-[240px]">
+                                      <EditableCell
+                                        value={activity.comment ?? ''}
+                                        onChange={(value) =>
+                                          updateActivityField(activityIndex, 'comment', value)
+                                        }
+                                        onFocus={() => focusCell(rowId, 'comment')}
+                                        onNavigate={handleCellNavigation}
+                                        isFocused={
+                                          focusedCell?.rowId === rowId &&
+                                          focusedCell.field === 'comment'
+                                        }
+                                        className="text-muted-foreground"
                                       />
                                     </TableCell>
                                   </TableRow>

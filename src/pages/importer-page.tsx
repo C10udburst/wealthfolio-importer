@@ -45,6 +45,7 @@ const SOURCE_OPTIONS = [
   { id: 'ing', label: 'ING Bank' },
   { id: 'pekao', label: 'Pekao Bank' },
   { id: 'xtb', label: 'XTB Broker' },
+  { id: 'paypal', label: 'PayPal' },
 ];
 
 const ACTIVITY_TYPE_OPTIONS = [
@@ -704,7 +705,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     <Page>
       <PageHeader
         heading="Import bank or broker statements"
-        text="Upload ING, Pekao, or XTB exports. We will auto-detect the source, let you confirm it, and preview transactions before import."
+        text="Upload ING, Pekao, XTB, or PayPal exports. We will auto-detect the source, let you confirm it, and preview transactions before import."
         actions={
           <Button variant="outline" onClick={() => ctx.api.navigation.navigate('/addon/wealthfolio-importer/delete')}>
             <Icons.Trash className="mr-2 h-4 w-4" />

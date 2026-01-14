@@ -1,9 +1,15 @@
 import { IngImporter } from './ing-importer';
+import { PayPalImporter } from './paypal-importer';
 import { PekaoImporter } from './pekao-importer';
 import { XtbImporter } from './xtb-importer';
 import type { ImportDetection, ImportSourceId } from './types';
 
-const importers = [new IngImporter(), new PekaoImporter(), new XtbImporter()];
+const importers = [
+  new IngImporter(),
+  new PekaoImporter(),
+  new XtbImporter(),
+  new PayPalImporter(),
+];
 
 export const getImporterById = (id: ImportSourceId | null | undefined) =>
   importers.find((importer) => importer.id === id) ?? null;

@@ -234,9 +234,18 @@ export class XtbImporter extends BaseImporter {
           ? `${finalComment} (ID: ${idText})`
           : `ID: ${idText}`;
       }
-      const { quantity, unitPrice } = isTradeActivity
+      let { quantity, unitPrice } = isTradeActivity
         ? extractTradeDetails(comment)
         : { quantity: null, unitPrice: null };
+      if (
+        isTradeActivity &&
+        quantity !== null &&
+        quantity !== 0 &&
+        amount !== null
+      ) {
+        // Derive unit price from cash amount to keep trade pricing in account currency.
+        unitPrice = amount / quantity;
+      }
 
       records.push({
         accountId: options.accountId,

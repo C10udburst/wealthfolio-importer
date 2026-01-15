@@ -166,6 +166,10 @@ export class XtbImporter extends BaseImporter {
 
     const records: ActivityImport[] = [];
     const warnings: string[] = [];
+    const pendingProfitRows = new Map<
+      string,
+      { amount: number; record: ActivityImport }[]
+    >();
 
     for (let i = headerIndex + 1; i < rows.length; i += 1) {
       const row = rows[i];
@@ -182,7 +186,7 @@ export class XtbImporter extends BaseImporter {
 
       const type = typeof typeValue === 'string' ? typeValue.trim() : String(typeValue ?? '').trim();
       const time = parseExcelDate(timeValue);
-      const amount = this.parseAmount(amountValue);
+      let amount = this.parseAmount(amountValue);
 
       const rowIsEmpty = !type && !timeValue && !commentValue && !symbolValue && !amountValue;
       if (rowIsEmpty) {
@@ -234,6 +238,60 @@ export class XtbImporter extends BaseImporter {
           ? `${finalComment} (ID: ${idText})`
           : `ID: ${idText}`;
       }
+      const numericId = Number(idText);
+      const profitMatchId =
+        Number.isFinite(numericId) && Number.isInteger(numericId)
+          ? String(numericId + 1)
+          : '';
+      if (isProfitOfPosition && profitMatchId) {
+        const profitKey = profitMatchId;
+        const pending = pendingProfitRows.get(profitKey) ?? [];
+        pending.push({
+          amount,
+          record: {
+            accountId: options.accountId,
+            activityType,
+            date: time,
+            symbol: cashSymbol,
+            amount,
+            currency,
+            isDraft: true,
+            isValid: true,
+            comment: finalComment,
+            lineNumber: i + 1,
+          },
+        });
+        pendingProfitRows.set(profitKey, pending);
+        continue;
+      }
+
+      const isCloseBuy = /close buy/i.test(comment);
+      let mergedProfit: number | null = null;
+      if (isTradeActivity && idText) {
+        const profitKey = idText;
+        const pending = pendingProfitRows.get(profitKey);
+        if (pending && pending.length > 0) {
+          const match = pending.shift();
+          mergedProfit = match ? match.amount : null;
+          if (pending.length === 0) {
+            pendingProfitRows.delete(profitKey);
+          }
+        }
+      }
+      let reviewErrors: Record<string, string[]> | undefined;
+      if (isCloseBuy && mergedProfit === null) {
+        reviewErrors = { import: ['Missing profit entry for close buy.'] };
+        finalComment = finalComment
+          ? `${finalComment} (Missing profit entry)`
+          : 'Missing profit entry';
+      }
+      if (mergedProfit !== null) {
+        amount += mergedProfit;
+        const profitNote = `Profit: ${mergedProfit}`;
+        finalComment = finalComment
+          ? `${finalComment} (${profitNote})`
+          : profitNote;
+      }
       let { quantity, unitPrice } = isTradeActivity
         ? extractTradeDetails(comment)
         : { quantity: null, unitPrice: null };
@@ -257,10 +315,25 @@ export class XtbImporter extends BaseImporter {
         quantity: quantity ?? undefined,
         unitPrice: unitPrice ?? undefined,
         isDraft: true,
-        isValid: true,
+        isValid: !reviewErrors,
+        errors: reviewErrors,
         comment: finalComment,
         lineNumber: i + 1,
       });
+    }
+
+    for (const pending of pendingProfitRows.values()) {
+      for (const entry of pending) {
+        const pendingComment = entry.record.comment
+          ? `${entry.record.comment} (Missing sale entry)`
+          : 'Missing sale entry';
+        records.push({
+          ...entry.record,
+          comment: pendingComment,
+          isValid: false,
+          errors: { import: ['Missing sale entry for profit record.'] },
+        });
+      }
     }
 
     return this.finalize(records, warnings);

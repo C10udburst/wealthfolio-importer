@@ -44,6 +44,10 @@ import {
   type ImportSourceId,
   type ParseOptions,
 } from '../parsers';
+import {
+  applySymbolMapping,
+  loadSymbolMappings,
+} from '../utils/symbol-mappings';
 
 const SUPPORTED_EXTENSIONS = ['csv', 'xlsx', 'xls', 'pdf'] as const;
 const FILE_ACCEPT = SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(',');
@@ -667,6 +671,24 @@ const buildActivityKey = (
     fallbackCurrency,
   )}|${normalizeKeyComment(comment)}`;
 
+const applySymbolMappingsToActivities = (activities: ActivityImport[]) => {
+  const mappings = loadSymbolMappings();
+  if (!Object.keys(mappings).length) {
+    return activities;
+  }
+  return activities.map((activity) => {
+    const symbol = typeof activity.symbol === 'string' ? activity.symbol : '';
+    if (!symbol) {
+      return activity;
+    }
+    const mapped = applySymbolMapping(symbol, mappings);
+    if (mapped === symbol) {
+      return activity;
+    }
+    return { ...activity, symbol: mapped };
+  });
+};
+
 const getActivityIssues = (
   activity: ActivityImport,
   fallbackCurrency: string | null,
@@ -690,6 +712,13 @@ const getActivityIssues = (
   }
   if (!currency) {
     issues.push('Missing currency');
+  }
+
+  if (activity.errors && Object.keys(activity.errors).length > 0) {
+    const errorMessages = Object.values(activity.errors).flat();
+    issues.push(...errorMessages);
+  } else if (activity.isValid === false) {
+    issues.push('Needs review');
   }
 
   const amount = activity.amount ?? undefined;
@@ -977,7 +1006,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
           return;
         }
         setParseResult(result);
-        setActivities(result.records);
+        setActivities(applySymbolMappingsToActivities(result.records));
         setPageIndex(0);
         setSearchText('');
         setImportError(null);
@@ -1298,10 +1327,26 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
         heading="Import bank or broker statements"
         text="Upload ING, Pekao, XTB, or PayPal exports. We will auto-detect the source, let you confirm it, and preview transactions before import."
         actions={
-          <Button variant="outline" onClick={() => ctx.api.navigation.navigate('/addon/wealthfolio-importer/delete')}>
-            <Icons.Trash className="mr-2 h-4 w-4" />
-            Bulk delete
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() =>
+                ctx.api.navigation.navigate('/addon/wealthfolio-importer/mappings')
+              }
+            >
+              <Icons.Tag className="mr-2 h-4 w-4" />
+              Symbol mappings
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
+                ctx.api.navigation.navigate('/addon/wealthfolio-importer/delete')
+              }
+            >
+              <Icons.Trash className="mr-2 h-4 w-4" />
+              Bulk delete
+            </Button>
+          </div>
         }
       />
       <PageContent>

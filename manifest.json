@@ -25,8 +25,13 @@
     },
     {
       "category": "portfolio",
-      "functions": ["recalculate"],
-      "purpose": "Refresh portfolio stats after bulk deletion"
+      "functions": ["recalculate", "getHoldings"],
+      "purpose": "Refresh portfolio stats after bulk deletion and resolve mapped symbols"
+    },
+    {
+      "category": "market-data",
+      "functions": ["searchTicker"],
+      "purpose": "Search Yahoo symbols for mapping suggestions"
     }
   ],
   "keywords": ["wealthfolio", "addon"],

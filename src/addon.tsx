@@ -3,6 +3,7 @@ import type { AddonContext } from '@wealthfolio/addon-sdk';
 import { Icons } from '@wealthfolio/ui';
 import BulkDeletePage from './pages/bulk-delete-page';
 import ImporterPage from './pages/importer-page';
+import MappingsPage from './pages/mappings-page';
 
 export default function enable(ctx: AddonContext) {
   // Add a sidebar item
@@ -25,6 +26,12 @@ export default function enable(ctx: AddonContext) {
   ctx.router.add({
     path: '/addon/wealthfolio-importer/delete',
     component: React.lazy(() => Promise.resolve({ default: DeleteWrapper })),
+  });
+
+  const MappingsWrapper = () => <MappingsPage ctx={ctx} />;
+  ctx.router.add({
+    path: '/addon/wealthfolio-importer/mappings',
+    component: React.lazy(() => Promise.resolve({ default: MappingsWrapper })),
   });
 
   // Cleanup on disable

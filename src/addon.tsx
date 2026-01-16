@@ -4,6 +4,7 @@ import { Icons } from '@wealthfolio/ui';
 import BulkDeletePage from './pages/bulk-delete-page';
 import ImporterPage from './pages/importer-page';
 import MappingsPage from './pages/mappings-page';
+import { startPolishBondTracking } from './services/polish-bonds';
 
 export default function enable(ctx: AddonContext) {
   // Add a sidebar item
@@ -34,8 +35,17 @@ export default function enable(ctx: AddonContext) {
     component: React.lazy(() => Promise.resolve({ default: MappingsWrapper })),
   });
 
+  const stopPolishBondTracking = startPolishBondTracking(ctx);
+
   // Cleanup on disable
   ctx.onDisable(() => {
+    try {
+      stopPolishBondTracking();
+    } catch (err) {
+      ctx.api.logger.error(
+        `Failed to stop bond tracking: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
     try {
       sidebarItem.remove();
     } catch (err) {

@@ -29,6 +29,21 @@
       "purpose": "Refresh portfolio stats after bulk deletion and resolve mapped symbols"
     },
     {
+      "category": "quotes",
+      "functions": ["update", "getHistory"],
+      "purpose": "Store and validate Polish bond buyback prices"
+    },
+    {
+      "category": "assets",
+      "functions": ["getProfile", "updateProfile"],
+      "purpose": "Set Polish bond metadata for class, subclass, country, and name"
+    },
+    {
+      "category": "events",
+      "functions": ["portfolio.onUpdateComplete"],
+      "purpose": "Detect newly added holdings for Polish bond tracking"
+    },
+    {
       "category": "market-data",
       "functions": ["searchTicker"],
       "purpose": "Search Yahoo symbols for mapping suggestions"

@@ -39,6 +39,7 @@ import {
 import {
   detectImporter,
   getImporterById,
+  getSupportedExtensions,
   type ImportDetection,
   type ImportParseResult,
   type ImportSourceId,
@@ -49,8 +50,22 @@ import {
   loadSymbolMappings,
 } from '../utils/symbol-mappings';
 
-const SUPPORTED_EXTENSIONS = ['csv', 'xlsx', 'xls', 'pdf'] as const;
+const SUPPORTED_EXTENSIONS = getSupportedExtensions();
 const FILE_ACCEPT = SUPPORTED_EXTENSIONS.map((ext) => `.${ext}`).join(',');
+
+const formatExtensionList = (extensions: string[]) => {
+  const normalized = extensions.map((extension) => extension.toUpperCase());
+  if (normalized.length === 0) {
+    return '';
+  }
+  if (normalized.length === 1) {
+    return normalized[0];
+  }
+  if (normalized.length === 2) {
+    return normalized.join(' or ');
+  }
+  return `${normalized.slice(0, -1).join(', ')}, or ${normalized[normalized.length - 1]}`;
+};
 
 const SOURCE_OPTIONS = [
   { id: 'auto', label: 'Auto-detect' },
@@ -786,6 +801,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const extension = file ? getFileExtension(file) : null;
+  const extensionList = formatExtensionList(SUPPORTED_EXTENSIONS);
   const effectiveSourceId =
     sourceOverride === 'auto' ? detection?.sourceId ?? null : sourceOverride;
   const effectiveSourceLabel =
@@ -1069,9 +1085,14 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     }
 
     const selectedExtension = getFileExtension(selectedFile);
-    if (!selectedExtension || !SUPPORTED_EXTENSIONS.includes(selectedExtension as typeof SUPPORTED_EXTENSIONS[number])) {
+    if (!selectedExtension || !SUPPORTED_EXTENSIONS.includes(selectedExtension)) {
       setFile(null);
-      setFileError('Unsupported file type. Please upload CSV, XLSX, or PDF.');
+      const extensionList = formatExtensionList(SUPPORTED_EXTENSIONS);
+      setFileError(
+        extensionList
+          ? `Unsupported file type. Please upload ${extensionList}.`
+          : 'Unsupported file type.',
+      );
       return;
     }
 
@@ -1405,7 +1426,9 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
               <CardHeader>
                 <CardTitle>Upload statement</CardTitle>
                 <CardDescription>
-                  Drag and drop a CSV, XLSX, or PDF file, or browse to select it.
+                  {extensionList
+                    ? `Drag and drop a ${extensionList} file, or browse to select it.`
+                    : 'Drag and drop a file, or browse to select it.'}
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -1421,7 +1444,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                   <Icons.Import className="text-muted-foreground mb-2 h-8 w-8" />
                   <div className="text-sm font-medium">Drop a file here or click to browse</div>
                   <div className="text-muted-foreground text-xs">
-                    Supported: CSV, XLSX, PDF
+                    {extensionList ? `Supported: ${extensionList}` : 'Supported file types vary.'}
                   </div>
                 </div>
 

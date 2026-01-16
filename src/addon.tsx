@@ -39,7 +39,9 @@ export default function enable(ctx: AddonContext) {
     try {
       sidebarItem.remove();
     } catch (err) {
-      ctx.api.logger.error('Failed to remove sidebar item:', err);
+      ctx.api.logger.error(
+        `Failed to remove sidebar item: ${err instanceof Error ? err.message : String(err)}`,
+      );
     }
   });
 }

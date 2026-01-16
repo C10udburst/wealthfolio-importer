@@ -11,6 +11,19 @@ const importers = [
   new PayPalImporter(),
 ];
 
+export const getSupportedExtensions = () => {
+  const extensions: string[] = [];
+  for (const importer of importers) {
+    for (const extension of importer.supportedExtensions) {
+      const normalized = extension.toLowerCase();
+      if (!extensions.includes(normalized)) {
+        extensions.push(normalized);
+      }
+    }
+  }
+  return extensions;
+};
+
 export const getImporterById = (id: ImportSourceId | null | undefined) =>
   importers.find((importer) => importer.id === id) ?? null;
 

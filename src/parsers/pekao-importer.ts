@@ -1,3 +1,4 @@
+import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { BaseImporter } from './base-importer';
 import type { ImportDetection, ImportParseResult, ParseOptions } from './types';
 
@@ -18,7 +19,7 @@ export class PekaoImporter extends BaseImporter {
     return null;
   }
 
-  async parse(file: File, _options: ParseOptions): Promise<ImportParseResult> {
+  async parse(file: File, options: ParseOptions): Promise<ImportParseResult> {
     const warnings: string[] = [];
     const mhtml = await file.text();
     const frame = findPekaoInvestmentsFrame(mhtml);
@@ -30,15 +31,231 @@ export class PekaoImporter extends BaseImporter {
     }
 
     const doc = new DOMParser().parseFromString(frame.html, 'text/html');
-    console.log('Pekao investments DOM', doc);
 
-    if (frame.contentLocation) {
-      warnings.push(`Parsed Pekao frame from ${frame.contentLocation}.`);
-    }
+    const { records, warnings: parseWarnings } = parsePekaoBondsCashOperations(
+      doc,
+      options,
+      (value) => this.parseAmount(value),
+    );
 
-    return this.finalize([], warnings);
+    warnings.push(...parseWarnings);
+
+    return this.finalize(records, warnings);
   }
 }
+
+const DATE_PATTERN = /(\d{1,2})\.(\d{1,2})\.(\d{4})/;
+const BOND_TITLE_PATTERN =
+  /DSP\.K:\s*\d+\s+(\d+)\s*[- ]\s*([A-Z]{3}\d{4})/i;
+
+const parsePekaoBondsCashOperations = (
+  doc: Document,
+  options: ParseOptions,
+  parseAmount: (value: unknown) => number | null,
+) => {
+  const warnings: string[] = [];
+  const records: ActivityImport[] = [];
+  const table =
+    doc.querySelector('pekao-bonds-history-cash-operations-table table') ??
+    findPekaoCashOperationsTable(doc);
+
+  if (!table) {
+    return {
+      records,
+      warnings: [
+        'Unable to locate Pekao bonds cash operations table in the MHTML file.',
+      ],
+    };
+  }
+
+  const rows = Array.from(table.querySelectorAll('tbody tr'));
+  let currentDate: Date | null = null;
+
+  rows.forEach((row, index) => {
+    const dateLabel = row.querySelector('.date-value')?.textContent;
+    if (dateLabel) {
+      const parsedDate = parsePekaoDate(dateLabel);
+      if (parsedDate) {
+        currentDate = parsedDate;
+      } else {
+        warnings.push(
+          `Row ${index + 1}: unable to parse date "${sanitizePekaoText(dateLabel)}".`,
+        );
+      }
+      return;
+    }
+
+    const title = extractCellText(row, 'td.cdk-column-title');
+    const type = extractCellText(row, 'td.cdk-column-type');
+    const amountCell = row.querySelector('td.cdk-column-accountBalance');
+    const amountText = sanitizePekaoText(amountCell?.textContent ?? '');
+
+    if (!title && !type && !amountText) {
+      return;
+    }
+
+    if (title.toLowerCase().startsWith('saldo')) {
+      return;
+    }
+
+    if (!currentDate) {
+      warnings.push(`Row ${index + 1}: missing date group for transaction.`);
+      return;
+    }
+
+    const amount = parseAmount(amountText);
+    if (amount === null) {
+      warnings.push(`Row ${index + 1}: missing amount value.`);
+      return;
+    }
+
+    const detectedCurrency = extractCurrency(amountCell);
+    const currency =
+      detectedCurrency ||
+      (options.accountCurrency ? options.accountCurrency.toUpperCase() : 'PLN');
+
+    if (!detectedCurrency && !options.accountCurrency) {
+      warnings.push(`Row ${index + 1}: missing currency, defaulted to PLN.`);
+    }
+
+    const bondMatch = parseBondTitle(title);
+    if (bondMatch) {
+      const purchaseDay = currentDate.getDate();
+      const dayToken = String(purchaseDay).padStart(2, '0');
+      const symbol = `${bondMatch.seriesId}.${dayToken}`;
+      const quantity =
+        bondMatch.quantity !== null ? bondMatch.quantity : undefined;
+      const unitPrice =
+        bondMatch.quantity && bondMatch.quantity !== 0
+          ? amount / bondMatch.quantity
+          : undefined;
+
+      if (!bondMatch.quantity) {
+        warnings.push(
+          `Row ${index + 1}: missing bond quantity in "${title}".`,
+        );
+      }
+
+      records.push({
+        accountId: options.accountId,
+        activityType: amount < 0 ? 'BUY' : 'SELL',
+        date: currentDate,
+        symbol,
+        amount,
+        currency,
+        quantity,
+        unitPrice,
+        isDraft: true,
+        isValid: true,
+        comment: buildPekaoComment(title, type),
+        lineNumber: index + 1,
+      });
+      return;
+    }
+
+    const cashSymbol = `$CASH-${currency}`;
+    records.push({
+      accountId: options.accountId,
+      activityType: mapPekaoCashActivity(type, amount),
+      date: currentDate,
+      symbol: cashSymbol,
+      amount,
+      currency,
+      isDraft: true,
+      isValid: true,
+      comment: buildPekaoComment(title, type),
+      lineNumber: index + 1,
+    });
+  });
+
+  return { records, warnings };
+};
+
+const parsePekaoDate = (value: string) => {
+  const match = value.match(DATE_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  if (
+    !Number.isFinite(day) ||
+    !Number.isFinite(month) ||
+    !Number.isFinite(year)
+  ) {
+    return null;
+  }
+  return new Date(year, month - 1, day);
+};
+
+const sanitizePekaoText = (value: unknown) => {
+  const text = typeof value === 'string' ? value : String(value ?? '');
+  return text.replace(/\s+/g, ' ').trim();
+};
+
+const extractCellText = (row: Element, selector: string) =>
+  sanitizePekaoText(row.querySelector(selector)?.textContent ?? '');
+
+const parseBondTitle = (title: string) => {
+  const normalized = sanitizePekaoText(title);
+  const match = normalized.match(BOND_TITLE_PATTERN);
+  if (!match) {
+    return null;
+  }
+  const quantity = Number(match[1]);
+  return {
+    quantity: Number.isFinite(quantity) ? quantity : null,
+    seriesId: match[2].toUpperCase(),
+  };
+};
+
+const extractCurrency = (cell: Element | null) => {
+  if (!cell) {
+    return null;
+  }
+  const suffix = sanitizePekaoText(
+    cell.querySelector('.cell-label-suffix')?.textContent ?? '',
+  );
+  const fallback = sanitizePekaoText(cell.textContent ?? '');
+  const match =
+    suffix.match(/\b[A-Z]{3}\b/) ?? fallback.match(/\b[A-Z]{3}\b/);
+  return match ? match[0].toUpperCase() : null;
+};
+
+const buildPekaoComment = (title: string, type: string) => {
+  if (title && type && !title.toLowerCase().includes(type.toLowerCase())) {
+    return `${title} (${type})`;
+  }
+  return title || type;
+};
+
+const mapPekaoCashActivity = (type: string, amount: number) => {
+  const normalized = type.toLowerCase();
+  if (normalized.includes('odsetk')) {
+    return 'INTEREST';
+  }
+  if (normalized.includes('podatek')) {
+    return 'TAX';
+  }
+  return amount >= 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+};
+
+const findPekaoCashOperationsTable = (doc: Document) => {
+  const tables = Array.from(doc.querySelectorAll('table'));
+  return (
+    tables.find((table) => {
+      const headers = Array.from(table.querySelectorAll('th')).map((cell) =>
+        sanitizePekaoText(cell.textContent ?? '').toLowerCase(),
+      );
+      return (
+        headers.includes('nazwa operacji') &&
+        headers.includes('kwota') &&
+        headers.includes('saldo po operacji')
+      );
+    }) ?? null
+  );
+};
 
 type MhtmlFrame = {
   html: string;

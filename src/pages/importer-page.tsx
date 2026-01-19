@@ -1709,14 +1709,27 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                       </div>
                     </div>
                     {parseResult.warnings.length > 0 && (
-                      <div className="text-muted-foreground text-xs">
-                        {parseResult.warnings.slice(0, 3).map((warning) => (
-                          <div key={warning}>{warning}</div>
-                        ))}
-                        {parseResult.warnings.length > 3 && (
-                          <div>+{parseResult.warnings.length - 3} more warnings</div>
-                        )}
-                      </div>
+                      <Card className="border-amber-200/70 bg-amber-50/70">
+                        <CardHeader className="pb-2">
+                          <CardTitle className="flex items-center gap-2 text-sm text-amber-900">
+                            <Icons.AlertCircle className="h-4 w-4 text-amber-600" />
+                            Warnings
+                          </CardTitle>
+                          <CardDescription className="text-xs text-amber-800/80">
+                            Review these items before importing.
+                          </CardDescription>
+                        </CardHeader>
+                        <CardContent className="space-y-1 text-xs text-amber-900">
+                          {parseResult.warnings.slice(0, 3).map((warning) => (
+                            <div key={warning}>{warning}</div>
+                          ))}
+                          {parseResult.warnings.length > 3 && (
+                            <div>
+                              +{parseResult.warnings.length - 3} more warnings
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
                     )}
                     {activities.length === 0 ? (
                       <div className="text-muted-foreground text-sm">No rows parsed.</div>

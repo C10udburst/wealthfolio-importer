@@ -433,6 +433,34 @@ const buildQuote = (symbol: string, quoteDate: Date, price: number): Quote => {
   };
 };
 
+const buildQuotePayload = (
+  symbol: string,
+  quoteDate: Date,
+  price: number,
+  existing?: Quote,
+): Quote => {
+  const base = buildQuote(symbol, quoteDate, price);
+  if (!existing) {
+    return base;
+  }
+  return {
+    ...base,
+    id: existing.id ?? base.id,
+    createdAt: existing.createdAt ?? base.createdAt,
+    dataSource: existing.dataSource ?? base.dataSource,
+  };
+};
+
+const priceChanged = (existing: Quote, nextPrice: number) => {
+  const existingPrice =
+    typeof existing.adjclose === 'number'
+      ? existing.adjclose
+      : typeof existing.close === 'number'
+        ? existing.close
+        : existing.open;
+  return Math.abs(existingPrice - nextPrice) > 0.004;
+};
+
 const extractQuoteDateKey = (quote: Quote) => {
   if (quote.timestamp) {
     const parsed = new Date(quote.timestamp);
@@ -454,17 +482,6 @@ const extractQuoteDateKey = (quote: Quote) => {
 };
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
-
-const normalizeNumericSeries = (values: Array<number | null>) => {
-  const normalized: number[] = [];
-  for (const value of values) {
-    if (value === null || value === undefined || !Number.isFinite(value)) {
-      return null;
-    }
-    normalized.push(value);
-  }
-  return normalized;
-};
 
 const getBuyoutDate = (series: BondSeries, purchaseDate: Date) => {
   const maturityDate = toDate(series.maturity);
@@ -512,7 +529,7 @@ const buildPeriods = (
 
 type DailyValue = { date: Date; price: number };
 
-const buildDailyValues = (series: BondSeries, purchaseDay?: number) => {
+const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
   const purchaseDate = resolvePurchaseDate(
     series.saleStart,
     series.saleEnd,
@@ -523,79 +540,73 @@ const buildDailyValues = (series: BondSeries, purchaseDay?: number) => {
     return null;
   }
 
-  const normalizedRates = normalizeNumericSeries(series.rateValues);
-  const normalizedInterest = normalizeNumericSeries(series.interestValues);
-  const interestCount = normalizedInterest?.length ?? 0;
-  const rateCount = normalizedRates?.length ?? 0;
-  const hasInterest = interestCount > 0;
-  const hasRates = rateCount > 0;
-  const interestHasMultiple = interestCount > 1;
-
-  let scheduleType: 'rate' | 'interest' | null = null;
-  let scheduleValues: number[] | null = null;
-
-  if (series.bondType === 'OTS' && purchaseDay !== undefined) {
-    if (hasRates) {
-      scheduleType = 'rate';
-      scheduleValues = [normalizedRates![0]];
+  if (series.bondType === 'OTS') {
+    const rate = series.rateValues[0];
+    const interest = series.interestValues[0];
+    let interestAmount: number | null = null;
+    if (purchaseDay !== undefined && typeof rate === 'number') {
+      const days = daysBetween(purchaseDate, buyoutDate);
+      interestAmount = series.emissionPrice * rate * (days / 365);
+    } else if (typeof interest === 'number') {
+      interestAmount = interest;
+    } else if (typeof rate === 'number') {
+      const days = daysBetween(purchaseDate, buyoutDate);
+      interestAmount = series.emissionPrice * rate * (days / 365);
     }
-  } else if (interestHasMultiple) {
-    scheduleType = 'interest';
-    scheduleValues = normalizedInterest!;
-  } else if (series.bondType === 'OTS' && purchaseDay === undefined && hasInterest) {
-    scheduleType = 'interest';
-    scheduleValues = normalizedInterest!;
-  } else if (hasRates && (interestCount <= 1 || rateCount > interestCount)) {
-    scheduleType = 'rate';
-    scheduleValues = normalizedRates!;
-  } else if (hasInterest) {
-    scheduleType = 'interest';
-    scheduleValues = normalizedInterest!;
-  } else if (hasRates) {
-    scheduleType = 'rate';
-    scheduleValues = normalizedRates!;
+    if (interestAmount === null) {
+      return null;
+    }
+    return [
+      {
+        date: purchaseDate,
+        price: round2(series.emissionPrice),
+      },
+      {
+        date: buyoutDate,
+        price: round2(series.emissionPrice + interestAmount),
+      },
+    ];
   }
 
-  if (!scheduleType || !scheduleValues) {
+  const periodCount = Math.max(
+    series.rateValues.length,
+    series.interestValues.length,
+  );
+  if (periodCount <= 0) {
     return null;
   }
 
   const termMonths =
     parseMaturityMonths(series.maturity) ?? monthsBetween(purchaseDate, buyoutDate);
-  const periodMonths = resolvePeriodMonths(termMonths, scheduleValues.length);
-  const periods = buildPeriods(
-    purchaseDate,
-    buyoutDate,
-    scheduleValues.length,
-    periodMonths,
-  );
+  const periodMonths = resolvePeriodMonths(termMonths, periodCount);
+  const periods = buildPeriods(purchaseDate, buyoutDate, periodCount, periodMonths);
   if (periods.length === 0) {
     return null;
   }
 
-  const values: DailyValue[] = [];
+  const values: DailyValue[] = [
+    { date: purchaseDate, price: round2(series.emissionPrice) },
+  ];
   let currentValue = series.emissionPrice;
-  values.push({ date: purchaseDate, price: round2(currentValue) });
-
   for (let i = 0; i < periods.length; i += 1) {
-    const period = periods[i];
-    const periodDays = daysBetween(period.start, period.end);
-    if (periodDays <= 0) {
+    const rate = series.rateValues[i];
+    const interest = series.interestValues[i];
+    if (typeof rate !== 'number' && typeof interest !== 'number') {
       continue;
     }
-    const periodValue = scheduleValues[Math.min(i, scheduleValues.length - 1)];
-    for (let day = 1; day <= periodDays; day += 1) {
-      const date = addDays(period.start, day);
-      const price =
-        scheduleType === 'interest'
-          ? currentValue + periodValue * (day / periodDays)
-          : currentValue + currentValue * periodValue * (day / 365);
-      values.push({ date, price: round2(price) });
+    const periodDays = daysBetween(periods[i].start, periods[i].end);
+    let interestAmount: number | null = null;
+    if (typeof interest === 'number') {
+      interestAmount = interest;
+    } else if (typeof rate === 'number') {
+      interestAmount = currentValue * rate * (periodDays / 365);
     }
-    const last = values[values.length - 1];
-    if (last) {
-      currentValue = last.price;
+    if (interestAmount === null) {
+      continue;
     }
+    const nextValue = round2(currentValue + interestAmount);
+    values.push({ date: periods[i].end, price: nextValue });
+    currentValue = nextValue;
   }
 
   return values;
@@ -622,6 +633,19 @@ const fetchHoldingSymbols = async (ctx: AddonContext) => {
   });
 
   return Array.from(symbols);
+};
+
+const updateQuotesInBatches = async (
+  ctx: AddonContext,
+  quotes: Quote[],
+  batchSize = 50,
+) => {
+  for (let i = 0; i < quotes.length; i += batchSize) {
+    const batch = quotes.slice(i, i + batchSize);
+    await Promise.all(
+      batch.map((quote) => ctx.api.quotes.update(quote.symbol, quote)),
+    );
+  }
 };
 
 const ensureBondMetadata = async (
@@ -684,9 +708,22 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
   const skippedSymbols = new Set<string>();
   const metadataUpdatedSymbols = new Set<string>();
   const inFlightSymbols = new Set<string>();
+  let suppressPortfolioRefresh = false;
+  let suppressTimeout: ReturnType<typeof setTimeout> | null = null;
   let refreshPromise: Promise<void> | null = null;
   let unlisten: (() => void) | null = null;
   let disabled = false;
+
+  const suspendPortfolioRefresh = (durationMs = 1500) => {
+    suppressPortfolioRefresh = true;
+    if (suppressTimeout) {
+      clearTimeout(suppressTimeout);
+    }
+    suppressTimeout = setTimeout(() => {
+      suppressPortfolioRefresh = false;
+      suppressTimeout = null;
+    }, durationMs);
+  };
 
   const refreshHoldings = async () => {
     if (refreshPromise) {
@@ -730,8 +767,11 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
             continue;
           }
 
-          const dailyValues = buildDailyValues(series, match.purchaseDay);
-          if (!dailyValues || dailyValues.length === 0) {
+          const scheduledValues = buildScheduledValues(
+            series,
+            match.purchaseDay,
+          );
+          if (!scheduledValues || scheduledValues.length === 0) {
             if (!skippedSymbols.has(symbol)) {
               ctx.api.logger.warn(
                 `Polish bonds: no price schedule for ${symbol}.`,
@@ -754,6 +794,7 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
           }
 
           let existingDates = new Set<string>();
+          const existingByDate = new Map<string, Quote>();
           try {
             const history = await ctx.api.quotes.getHistory(symbol);
             existingDates = new Set(
@@ -761,6 +802,12 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
                 .map((quote) => extractQuoteDateKey(quote))
                 .filter((key): key is string => Boolean(key)),
             );
+            history.forEach((quote) => {
+              const key = extractQuoteDateKey(quote);
+              if (key && !existingByDate.has(key)) {
+                existingByDate.set(key, quote);
+              }
+            });
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error);
             ctx.api.logger.warn(
@@ -768,15 +815,29 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
             );
           }
 
-          const quotesToAdd = dailyValues
-            .filter((value) => !existingDates.has(formatDateISO(value.date)))
-            .map((value) => buildQuote(symbol, value.date, value.price));
+          const quotesToAdd: Quote[] = [];
+          scheduledValues.forEach((value) => {
+            const dateKey = formatDateISO(value.date);
+            const existing = existingByDate.get(dateKey);
+            if (existing) {
+              if (priceChanged(existing, value.price)) {
+                quotesToAdd.push(
+                  buildQuotePayload(symbol, value.date, value.price, existing),
+                );
+              }
+              return;
+            }
+            if (!existingDates.has(dateKey)) {
+              quotesToAdd.push(buildQuotePayload(symbol, value.date, value.price));
+            }
+          });
 
-          for (const quote of quotesToAdd) {
-            await ctx.api.quotes.update(symbol, quote);
+          if (quotesToAdd.length > 0) {
+            suspendPortfolioRefresh();
+            await updateQuotesInBatches(ctx, quotesToAdd);
           }
 
-          const lastPrice = dailyValues[dailyValues.length - 1]?.price;
+          const lastPrice = scheduledValues[scheduledValues.length - 1]?.price;
           ctx.api.logger.info(
             `Polish bonds: added ${quotesToAdd.length} quotes for ${symbol}${typeof lastPrice === 'number' ? ` (buyback ${lastPrice})` : ''}.`,
           );
@@ -798,6 +859,9 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
   const setup = async () => {
     try {
       unlisten = await ctx.api.events.portfolio.onUpdateComplete(() => {
+        if (suppressPortfolioRefresh) {
+          return;
+        }
         void refreshHoldings();
       });
       if (disabled && unlisten) {
@@ -818,6 +882,10 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
     if (unlisten) {
       unlisten();
       unlisten = null;
+    }
+    if (suppressTimeout) {
+      clearTimeout(suppressTimeout);
+      suppressTimeout = null;
     }
   };
 };

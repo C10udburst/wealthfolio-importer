@@ -154,6 +154,16 @@ const countNonEmptyFrom = (row: unknown[], startIdx: number) => {
   return count;
 };
 
+const findNextHeaderIndex = (row: unknown[], startIdx: number) => {
+  for (let idx = startIdx + 1; idx < row.length; idx += 1) {
+    const value = row[idx];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return idx;
+    }
+  }
+  return -1;
+};
+
 const extractNumberRange = (
   row: unknown[],
   startIdx: number,
@@ -268,12 +278,26 @@ const getSheetMeta = (sheetName: string, rows: unknown[][]): SheetMeta | null =>
       (value) => typeof value === 'string' && value.trim().length > 0,
     );
 
+  const nextHeaderAfterRate =
+    interestIdx > rateIdx ? interestIdx : findNextHeaderIndex(headerRow, rateIdx);
+  const nextHeaderAfterInterest =
+    interestIdx >= 0 ? findNextHeaderIndex(headerRow, interestIdx) : -1;
+  const rateLimit =
+    nextHeaderAfterRate > rateIdx ? nextHeaderAfterRate - rateIdx : null;
+  const interestLimit =
+    nextHeaderAfterInterest > interestIdx
+      ? nextHeaderAfterInterest - interestIdx
+      : null;
+
   const dataStartRow = hasSubHeader ? 2 : 1;
   let rateCount = 1;
   if (hasSubHeader) {
     rateCount = countNonEmptyFrom(subHeaderRow, rateIdx);
-  } else if (interestIdx > rateIdx) {
-    rateCount = Math.max(1, interestIdx - rateIdx);
+    if (rateLimit !== null) {
+      rateCount = Math.min(rateCount, rateLimit);
+    }
+  } else if (rateLimit !== null) {
+    rateCount = Math.max(1, rateLimit);
   }
   if (rateCount <= 0) {
     rateCount = 1;
@@ -284,6 +308,9 @@ const getSheetMeta = (sheetName: string, rows: unknown[][]): SheetMeta | null =>
     interestCount = hasSubHeader
       ? countNonEmptyFrom(subHeaderRow, interestIdx)
       : 1;
+    if (interestLimit !== null) {
+      interestCount = Math.min(interestCount, interestLimit);
+    }
     if (interestCount <= 0) {
       interestCount = 1;
     }
@@ -529,7 +556,7 @@ const buildPeriods = (
 
 type DailyValue = { date: Date; price: number };
 
-const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
+const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {    
   const purchaseDate = resolvePurchaseDate(
     series.saleStart,
     series.saleEnd,
@@ -539,6 +566,12 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
   if (!buyoutDate) {
     return null;
   }
+
+  const today = toLocalDate(new Date());
+  const valuesByDate = new Map<string, DailyValue>();
+  const addValue = (date: Date, price: number) => {
+    valuesByDate.set(formatDateISO(date), { date, price });
+  };
 
   if (series.bondType === 'OTS') {
     const rate = series.rateValues[0];
@@ -556,16 +589,24 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
     if (interestAmount === null) {
       return null;
     }
-    return [
-      {
-        date: purchaseDate,
-        price: round2(series.emissionPrice),
-      },
-      {
-        date: buyoutDate,
-        price: round2(series.emissionPrice + interestAmount),
-      },
-    ];
+    const purchasePrice = round2(series.emissionPrice);
+    addValue(purchaseDate, purchasePrice);
+    const totalDays = daysBetween(purchaseDate, buyoutDate);
+    if (totalDays > 0) {
+      const dailyEnd = today < buyoutDate ? today : buyoutDate;
+      const dailyDays = daysBetween(purchaseDate, dailyEnd);
+      for (let dayOffset = 1; dayOffset <= dailyDays; dayOffset += 1) {
+        const date = addDays(purchaseDate, dayOffset);
+        const price = round2(
+          series.emissionPrice + interestAmount * (dayOffset / totalDays),
+        );
+        addValue(date, price);
+      }
+    }
+    addValue(buyoutDate, round2(series.emissionPrice + interestAmount));
+    return Array.from(valuesByDate.values()).sort(
+      (left, right) => left.date.getTime() - right.date.getTime(),
+    );
   }
 
   const periodCount = Math.max(
@@ -584,9 +625,7 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
     return null;
   }
 
-  const values: DailyValue[] = [
-    { date: purchaseDate, price: round2(series.emissionPrice) },
-  ];
+  addValue(purchaseDate, round2(series.emissionPrice));
   let currentValue = series.emissionPrice;
   for (let i = 0; i < periods.length; i += 1) {
     const rate = series.rateValues[i];
@@ -605,11 +644,24 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
       continue;
     }
     const nextValue = round2(currentValue + interestAmount);
-    values.push({ date: periods[i].end, price: nextValue });
+    const dailyEnd = today < periods[i].end ? today : periods[i].end;
+    if (dailyEnd > periods[i].start && periodDays > 0) {
+      const dailyDays = daysBetween(periods[i].start, dailyEnd);
+      for (let dayOffset = 1; dayOffset <= dailyDays; dayOffset += 1) {
+        const date = addDays(periods[i].start, dayOffset);
+        const price = round2(
+          currentValue + interestAmount * (dayOffset / periodDays),
+        );
+        addValue(date, price);
+      }
+    }
+    addValue(periods[i].end, nextValue);
     currentValue = nextValue;
   }
 
-  return values;
+  return Array.from(valuesByDate.values()).sort(
+    (left, right) => left.date.getTime() - right.date.getTime(),
+  );
 };
 
 const fetchHoldingSymbols = async (ctx: AddonContext) => {

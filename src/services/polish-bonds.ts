@@ -572,6 +572,11 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
   const addValue = (date: Date, price: number) => {
     valuesByDate.set(formatDateISO(date), { date, price });
   };
+  const addValueIfPast = (date: Date, price: number) => {
+    if (date <= today) {
+      addValue(date, price);
+    }
+  };
 
   if (series.bondType === 'OTS') {
     const rate = series.rateValues[0];
@@ -590,7 +595,7 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
       return null;
     }
     const purchasePrice = round2(series.emissionPrice);
-    addValue(purchaseDate, purchasePrice);
+    addValueIfPast(purchaseDate, purchasePrice);
     const totalDays = daysBetween(purchaseDate, buyoutDate);
     if (totalDays > 0) {
       const dailyEnd = today < buyoutDate ? today : buyoutDate;
@@ -603,7 +608,7 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
         addValue(date, price);
       }
     }
-    addValue(buyoutDate, round2(series.emissionPrice + interestAmount));
+    // addValue(buyoutDate, round2(series.emissionPrice + interestAmount));
     return Array.from(valuesByDate.values()).sort(
       (left, right) => left.date.getTime() - right.date.getTime(),
     );
@@ -625,7 +630,7 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
     return null;
   }
 
-  addValue(purchaseDate, round2(series.emissionPrice));
+  addValueIfPast(purchaseDate, round2(series.emissionPrice));
   let currentValue = series.emissionPrice;
   for (let i = 0; i < periods.length; i += 1) {
     const rate = series.rateValues[i];
@@ -655,7 +660,7 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
         addValue(date, price);
       }
     }
-    addValue(periods[i].end, nextValue);
+    addValueIfPast(periods[i].end, nextValue);
     currentValue = nextValue;
   }
 

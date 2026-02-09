@@ -678,11 +678,14 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
     }
     const periodDays = daysBetween(periods[i].start, periods[i].end);
     let interestAmount: number | null = null;
-    if (typeof interest === 'number') {
-      interestAmount = interest;
-    } else if (typeof rate === 'number') {
+    
+    // Favor rate for better interpolation precision if available
+    if (typeof rate === 'number') {
       interestAmount = currentValue * rate * (periodDays / 365);
+    } else if (typeof interest === 'number') {
+      interestAmount = interest;
     }
+
     if (interestAmount === null) {
       continue;
     }
@@ -699,7 +702,16 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
       }
     }
     addValueIfPast(periods[i].end, nextValue);
-    currentValue = nextValue;
+    
+    // For non-capitalizing bonds (like ROR, DOR), interest is paid out
+    // so the next period starts with the same principal (currentValue).
+    // For capitalizing bonds (like COI, EDO, TOS, ROS), interest is added.
+    const paysOutInterest = ['ROR', 'DOR'].includes(series.bondType);
+    if (!paysOutInterest) {
+      currentValue = nextValue;
+    } else {
+      currentValue = series.emissionPrice; // Reset to original principal
+    }
   }
 
   return Array.from(valuesByDate.values()).sort(

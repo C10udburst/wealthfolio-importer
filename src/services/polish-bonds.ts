@@ -2,8 +2,8 @@ import type { AddonContext, Quote } from '@wealthfolio/addon-sdk';
 import * as XLSX from 'xlsx';
 import { normalizeSymbol } from '../utils/symbol-mappings';
 
-const BONDS_URL =
-  'https://www.gov.pl/attachment/b3ec5054-0cc1-45ce-900a-6242e284e65c';
+const MAIN_BONDS_PAGE_URL =
+  'https://www.gov.pl/web/finanse/obligacje-detaliczne1';
 const BOND_SYMBOL_PATTERN = /^([A-Z]{3}\d{4})(?:\.(\d{1,2}))?$/;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
@@ -227,15 +227,53 @@ const parseBondSymbol = (symbol: string): BondMatch | null => {
   return Number.isNaN(purchaseDay) ? { seriesId, bondType } : { seriesId, bondType, purchaseDay };
 };
 
-const getWorkbook = async () => {
+const fetchLatestBondsUrl = async (ctx: AddonContext): Promise<string> => {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch(MAIN_BONDS_PAGE_URL, { signal: controller.signal });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch bonds page: ${response.status} ${response.statusText}`);
+    }
+    const html = await response.text();
+    const doc = new DOMParser().parseFromString(html, 'text/html');
+    const links = Array.from(doc.querySelectorAll('a.file-download'));
+
+    for (const link of links) {
+      const ariaLabel = link.getAttribute('aria-label') ?? '';
+      const downloadAttr = link.getAttribute('download') ?? '';
+      const textContent = link.textContent ?? '';
+
+      if (
+        ariaLabel.includes('Dane_dotyczace_obligacji_detalicznych.xls') ||
+        downloadAttr.includes('Dane_dotyczace_obligacji_detalicznych.xls') ||
+        textContent.includes('Dane_dotyczace_obligacji_detalicznych.xls')
+      ) {
+        const href = link.getAttribute('href');
+        if (href) {
+          const url = href.startsWith('http') ? href : `https://www.gov.pl${href}`;
+          ctx.api.logger.info(`Polish bonds: discovered latest URL: ${url}`);
+          return url;
+        }
+      }
+    }
+
+    throw new Error('Could not find the bonds data file link on the page.');
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
+const getWorkbook = async (ctx: AddonContext) => {
   if (workbookPromise) {
     return workbookPromise;
   }
   workbookPromise = (async () => {
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 15000);
+    const timeout = setTimeout(() => controller.abort(), 20000);
     try {
-      const response = await fetch(BONDS_URL, { signal: controller.signal });
+      const bondsUrl = await fetchLatestBondsUrl(ctx);
+      const response = await fetch(bondsUrl, { signal: controller.signal });
       if (!response.ok) {
         throw new Error(`Download failed: ${response.status} ${response.statusText}`);
       }
@@ -362,12 +400,12 @@ const parseSeriesRow = (
   };
 };
 
-const loadBondSeries = async (bondType: string) => {
+const loadBondSeries = async (ctx: AddonContext, bondType: string) => {
   const cached = sheetSeriesCache.get(bondType);
   if (cached) {
     return cached;
   }
-  const workbook = await getWorkbook();
+  const workbook = await getWorkbook(ctx);
   const worksheet = workbook.Sheets[bondType];
   if (!worksheet) {
     return null;
@@ -392,8 +430,8 @@ const loadBondSeries = async (bondType: string) => {
   return map;
 };
 
-const getBondSeries = async (seriesId: string, bondType: string) => {
-  const seriesMap = await loadBondSeries(bondType);
+const getBondSeries = async (ctx: AddonContext, seriesId: string, bondType: string) => {
+  const seriesMap = await loadBondSeries(ctx, bondType);
   if (!seriesMap) {
     return null;
   }
@@ -402,12 +440,12 @@ const getBondSeries = async (seriesId: string, bondType: string) => {
 
 let opisMapPromise: Promise<Map<string, string>> | null = null;
 
-const loadOpisMap = async () => {
+const loadOpisMap = async (ctx: AddonContext) => {
   if (opisMapPromise) {
     return opisMapPromise;
   }
   opisMapPromise = (async () => {
-    const workbook = await getWorkbook();
+    const workbook = await getWorkbook(ctx);
     const worksheet = workbook.Sheets.Opis;
     if (!worksheet) {
       return new Map<string, string>();
@@ -723,7 +761,7 @@ const ensureBondMetadata = async (
     return;
   }
 
-  const opisMap = await loadOpisMap();
+  const opisMap = await loadOpisMap(ctx);
   const description = opisMap.get(bondType);
   const name = !profile.name || !profile.name.trim()
     ? formatBondName(seriesId, description)
@@ -813,7 +851,7 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
 
         inFlightSymbols.add(symbol);
         try {
-          const series = await getBondSeries(match.seriesId, match.bondType);
+          const series = await getBondSeries(ctx, match.seriesId, match.bondType);
           if (!series) {
             if (!skippedSymbols.has(symbol)) {
               ctx.api.logger.warn(

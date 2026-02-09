@@ -48,6 +48,13 @@ const DATE_PATTERN = /(\d{1,2})\.(\d{1,2})\.(\d{4})/;
 const BOND_TITLE_PATTERN =
   /DSP\.K:\s*\d+\s+(\d+)\s*[- ]\s*([A-Z]{3}\d{4})/i;
 
+const setTimeForTransaction = (date: Date, transactionIndex: number): Date => {
+  const result = new Date(date);
+  const minutes = 59 - transactionIndex;
+  result.setHours(23, minutes, 0, 0);
+  return result;
+};
+
 const parsePekaoBondsCashOperations = (
   doc: Document,
   options: ParseOptions,
@@ -70,6 +77,7 @@ const parsePekaoBondsCashOperations = (
 
   const rows = Array.from(table.querySelectorAll('tbody tr'));
   let currentDate: Date | null = null;
+  let transactionCountForDate = 0;
 
   rows.forEach((row, index) => {
     const dateLabel = row.querySelector('.date-value')?.textContent;
@@ -77,6 +85,7 @@ const parsePekaoBondsCashOperations = (
       const parsedDate = parsePekaoDate(dateLabel);
       if (parsedDate) {
         currentDate = parsedDate;
+        transactionCountForDate = 0;
       } else {
         warnings.push(
           `Row ${index + 1}: unable to parse date "${sanitizePekaoText(dateLabel)}".`,
@@ -139,7 +148,7 @@ const parsePekaoBondsCashOperations = (
       records.push({
         accountId: options.accountId,
         activityType: amount < 0 ? 'BUY' : 'SELL',
-        date: currentDate,
+        date: setTimeForTransaction(currentDate, transactionCountForDate),
         symbol,
         amount,
         currency,
@@ -150,6 +159,7 @@ const parsePekaoBondsCashOperations = (
         comment: buildPekaoComment(title, type),
         lineNumber: index + 1,
       });
+      transactionCountForDate++;
       return;
     }
 
@@ -157,7 +167,7 @@ const parsePekaoBondsCashOperations = (
     records.push({
       accountId: options.accountId,
       activityType: mapPekaoCashActivity(type, amount),
-      date: currentDate,
+      date: setTimeForTransaction(currentDate, transactionCountForDate),
       symbol: cashSymbol,
       amount,
       currency,
@@ -166,6 +176,7 @@ const parsePekaoBondsCashOperations = (
       comment: buildPekaoComment(title, type),
       lineNumber: index + 1,
     });
+    transactionCountForDate++;
   });
 
   return { records, warnings };

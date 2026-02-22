@@ -4,7 +4,10 @@
   "description": "A Wealthfolio addon for importing data from different sources",
   "type": "module",
   "main": "dist/addon.js",
-  "keywords": ["wealthfolio", "addon"],
+  "keywords": [
+    "wealthfolio",
+    "addon"
+  ],
   "license": "MIT",
   "scripts": {
     "build": "vite build",
@@ -19,20 +22,20 @@
   "dependencies": {
     "@wealthfolio/addon-sdk": "^2.0.0",
     "@wealthfolio/ui": "^2.0.0",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.1.13",
+    "@tailwindcss/vite": "^4.2.0",
+    "@types/node": "^20.19.33",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.4",
     "@wealthfolio/addon-dev-tools": "^2.0.0",
-    "@types/node": "^20.0.0",
-    "@types/react": "^19.1.1",
-    "@types/react-dom": "^19.1.1",
-    "@vitejs/plugin-react": "^5.0.2",
     "rollup-plugin-external-globals": "^0.13.0",
-    "tailwindcss": "^4.1.13",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.5"
+    "tailwindcss": "^4.2.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.3.1"
   }
 }

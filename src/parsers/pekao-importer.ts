@@ -163,12 +163,18 @@ const parsePekaoBondsCashOperations = (
       return;
     }
 
-    const cashSymbol = `$CASH-${currency}`;
+    const activityType = mapPekaoCashActivity(title, type, amount);
+    const resolvedSymbol = resolvePekaoCashSymbol(
+      activityType,
+      title,
+      currency,
+      currentDate,
+    );
     records.push({
       accountId: options.accountId,
-      activityType: mapPekaoCashActivity(type, amount),
+      activityType,
       date: setTimeForTransaction(currentDate, transactionCountForDate),
-      symbol: cashSymbol,
+      symbol: resolvedSymbol,
       amount,
       currency,
       isDraft: true,
@@ -241,15 +247,70 @@ const buildPekaoComment = (title: string, type: string) => {
   return title || type;
 };
 
-const mapPekaoCashActivity = (type: string, amount: number) => {
-  const normalized = type.toLowerCase();
-  if (normalized.includes('odsetk')) {
-    return 'INTEREST';
+const mapPekaoCashActivity = (title: string, type: string, amount: number) => {
+  const normalizedType = type.toLowerCase();
+
+  if (normalizedType.includes('odsetk')) {
+    return 'DIVIDEND';
   }
-  if (normalized.includes('podatek')) {
+  if (normalizedType.includes('podatek')) {
     return 'TAX';
   }
+
+  // Pekao24 bond cash operations sometimes use generic type labels (e.g. "Przelewy pieniężne"),
+  // while the actual meaning is encoded in the operation title.
+  const combined = `${sanitizePekaoText(title)} ${sanitizePekaoText(type)}`
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '.');
+
+  if (combined.includes('odsetk')) {
+    return 'DIVIDEND';
+  }
+  if (combined.includes('podatek')) {
+    return 'TAX';
+  }
+
+  if (combined.includes('pod.ods.osp')) {
+    return 'TAX';
+  }
+  if (combined.includes('wyp.ods.osp')) {
+    return 'DIVIDEND';
+  }
+
   return amount >= 0 ? 'DEPOSIT' : 'WITHDRAWAL';
+};
+
+const BOND_SERIES_PATTERN = /\b([A-Z]{3}\d{4})\b/i;
+
+const extractPekaoBondSeriesIdFromTitle = (title: string) => {
+  const normalized = sanitizePekaoText(title);
+  const match = normalized.match(BOND_SERIES_PATTERN);
+  if (!match) {
+    return null;
+  }
+
+  return match[1].toUpperCase();
+};
+
+const buildBondSymbolWithDay = (seriesId: string, date: Date) => {
+  const dayToken = String(date.getDate()).padStart(2, '0');
+  return `${seriesId}.${dayToken}`;
+};
+
+const resolvePekaoCashSymbol = (
+  activityType: string,
+  title: string,
+  currency: string,
+  payoutDate: Date,
+) => {
+  if (activityType === 'DIVIDEND' || activityType === 'TAX') {
+    const seriesId = extractPekaoBondSeriesIdFromTitle(title);
+    if (seriesId) {
+      return buildBondSymbolWithDay(seriesId, payoutDate);
+    }
+  }
+
+  return `$CASH-${currency}`;
 };
 
 const findPekaoCashOperationsTable = (doc: Document) => {

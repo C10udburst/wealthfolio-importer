@@ -70,7 +70,8 @@ const formatExtensionList = (extensions: string[]) => {
 const SOURCE_OPTIONS = [
   { id: 'auto', label: 'Auto-detect' },
   { id: 'ing', label: 'ING Bank' },
-  { id: 'pekao', label: 'Pekao Bank' },
+  { id: 'pekao', label: 'Pekao Investments' },
+  { id: 'pekao-accounts', label: 'Pekao Accounts' },
   { id: 'xtb', label: 'XTB Broker' },
   { id: 'paypal', label: 'PayPal' },
 ];
@@ -1346,7 +1347,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     <Page>
       <PageHeader
         heading="Import bank or broker statements"
-        text="Upload ING, Pekao, XTB, or PayPal exports. We will auto-detect the source, let you confirm it, and preview transactions before import."
+        text="Upload ING, Pekao Investments, Pekao Accounts, XTB, or PayPal exports. We will auto-detect the source, let you confirm it, and preview transactions before import."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button

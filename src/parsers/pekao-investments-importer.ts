@@ -2,9 +2,9 @@ import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { BaseImporter } from './base-importer';
 import type { ImportDetection, ImportParseResult, ParseOptions } from './types';
 
-export class PekaoImporter extends BaseImporter {
+export class PekaoInvestmentsImporter extends BaseImporter {
   id = 'pekao' as const;
-  label = 'Pekao Bank';
+  label = 'Pekao Investments';
   supportedExtensions = ['mhtml'];
   fileNamePattern = /^Pekao24\.mhtml$/i;
 
@@ -13,7 +13,7 @@ export class PekaoImporter extends BaseImporter {
       return {
         sourceId: this.id,
         confidence: 0.85,
-        reason: 'Filename matches Pekao export pattern',
+        reason: 'Filename matches Pekao investments export pattern',
       };
     }
     return null;

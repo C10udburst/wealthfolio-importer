@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import type { Account, ActivityImport, AddonContext } from '@wealthfolio/addon-sdk';
+import type { Account, ActivityCreate, ActivityImport, AddonContext } from '@wealthfolio/addon-sdk';
 import {
   Badge,
   Button,
@@ -1258,6 +1258,27 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     setImportError(null);
     setImportSuccess(null);
 
+    const safeRandomId = () => {
+      try {
+        return crypto.randomUUID();
+      } catch {
+        return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+      }
+    };
+
+    const hashToBase36 = (input: string) => {
+      // Simple deterministic hash (djb2-ish) -> base36; avoids long idempotency keys.
+      let hash = 5381;
+      for (let i = 0; i < input.length; i += 1) {
+        hash = (hash * 33) ^ input.charCodeAt(i);
+      }
+      return (hash >>> 0).toString(36);
+    };
+
+    const sourceGroupId = file
+      ? `wealthfolio-importer:${selectedAccount.id}:${file.name}:${file.lastModified}`
+      : `wealthfolio-importer:${selectedAccount.id}:${safeRandomId()}`;
+
     const preparedActivities = activities.map((activity) => {
       const currency =
         activity.currency && activity.currency.trim()
@@ -1271,24 +1292,28 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
         symbol: typeof activity.symbol === 'string' ? activity.symbol.trim() : '',
         date: dateValue ?? '',
         amount: normalizeImportNumber(activity.amount),
-        quantity: normalizeImportNumber(activity.quantity) ?? 0,
-        unitPrice: normalizeImportNumber(activity.unitPrice) ?? 0,
-        fee: normalizeImportNumber(activity.fee) ?? 0,
+        quantity: normalizeImportNumber(activity.quantity),
+        unitPrice: normalizeImportNumber(activity.unitPrice),
+        fee: normalizeImportNumber(activity.fee),
       };
     });
 
     try {
       const existingActivities = await ctx.api.activities.getAll(selectedAccount.id);
       const existingKeys = new Set(
-        existingActivities.map((activity) =>
-          buildActivityKey(
+        existingActivities.map((activity) => {
+          const parsedAmount =
+            typeof activity.amount === 'string' && activity.amount.trim()
+              ? Number(activity.amount)
+              : undefined;
+          return buildActivityKey(
             activity.date instanceof Date ? activity.date : new Date(activity.date),
-            activity.amount,
+            Number.isFinite(parsedAmount) ? parsedAmount : undefined,
             activity.currency,
             selectedAccount.currency,
             activity.comment ?? '',
-          ),
-        ),
+          );
+        }),
       );
       let skippedExisting = 0;
       const dedupedActivities = preparedActivities.filter((activity) => {
@@ -1315,26 +1340,200 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
         return;
       }
 
-      const checked = await ctx.api.activities.checkImport(
-        selectedAccount.id,
-        dedupedActivities,
-      );
-      const invalidCount = checked.filter((activity) => !activity.isValid).length;
-      setActivities(checked);
+      // Resolve exchange MIC for market tickers when possible.
+      // If a symbol cannot be found (e.g., local bonds like ROR0227.09), we still allow import
+      // by creating a custom MANUAL asset during activity creation.
+      let resolvedActivities = dedupedActivities;
+      try {
+        const uniqueSymbols = Array.from(
+          new Set(
+            resolvedActivities
+              .map((activity) =>
+                typeof activity.symbol === 'string' ? activity.symbol.trim() : '',
+              )
+              .filter(
+                (symbol) =>
+                  symbol.length > 0 && !symbol.toUpperCase().startsWith('$CASH-'),
+              ),
+          ),
+        );
+
+        const symbolToMic = new Map<string, string>();
+        await Promise.all(
+          uniqueSymbols.map(async (symbol) => {
+            try {
+              const results = await ctx.api.market.searchTicker(symbol);
+              const exact = results.find(
+                (result) => result.symbol?.toUpperCase() === symbol.toUpperCase(),
+              );
+              const mic = exact?.exchangeMic;
+              if (mic && mic.trim()) {
+                symbolToMic.set(symbol, mic);
+              }
+            } catch {
+              // ignore
+            }
+          }),
+        );
+
+        resolvedActivities = resolvedActivities.map((activity) => {
+          const symbol = typeof activity.symbol === 'string' ? activity.symbol.trim() : '';
+          const mic = symbolToMic.get(symbol);
+          if (!mic) {
+            return activity;
+          }
+          return { ...activity, exchangeMic: mic };
+        });
+      } catch {
+        // ignore
+      }
+
+      const validated = resolvedActivities.map((activity) => {
+        const status = getActivityIssues(activity, fallbackCurrency);
+        if (status.issues.length === 0) {
+          return { ...activity, isValid: true, errors: undefined };
+        }
+        return {
+          ...activity,
+          isValid: false,
+          errors: { ...(activity.errors ?? {}), import: status.issues },
+        };
+      });
+
+      const invalidCount = validated.filter((activity) => !activity.isValid).length;
+      setActivities(validated);
 
       if (invalidCount > 0) {
         setImportError(`Fix ${invalidCount} row${invalidCount === 1 ? '' : 's'} before importing.`);
         return;
       }
 
-      const imported = await ctx.api.activities.import(checked);
+      const toActivityCreate = (activity: ActivityImport): ActivityCreate => {
+        const symbolValue = typeof activity.symbol === 'string' ? activity.symbol.trim() : '';
+        const currencyValue =
+          typeof activity.currency === 'string' && activity.currency.trim()
+            ? activity.currency.trim()
+            : selectedAccount.currency;
+
+        const isCashSymbol = symbolValue.toUpperCase().startsWith('$CASH-');
+        const resolvedMic =
+          typeof activity.exchangeMic === 'string' && activity.exchangeMic.trim()
+            ? activity.exchangeMic.trim()
+            : undefined;
+        const symbol: NonNullable<ActivityCreate['symbol']> | undefined = symbolValue
+          ? isCashSymbol
+            ? {
+                symbol: symbolValue,
+                kind: 'FX',
+                name: `Cash ${currencyValue}`,
+                quoteMode: 'MANUAL',
+              }
+            : resolvedMic
+              ? {
+                  symbol: symbolValue,
+                  exchangeMic: resolvedMic,
+                }
+              : {
+                  // Allow importing custom/non-market symbols (e.g., Polish bonds)
+                  symbol: symbolValue,
+                  kind: 'INVESTMENT',
+                  name:
+                    typeof activity.symbolName === 'string' && activity.symbolName.trim()
+                      ? activity.symbolName.trim()
+                      : symbolValue,
+                  quoteMode: 'MANUAL',
+                }
+          : undefined;
+
+        const idempotencySeed = [
+          sourceGroupId,
+          String(activity.lineNumber ?? ''),
+          normalizeKeyDate(activity.date),
+          symbolValue,
+          currencyValue,
+          String(activity.activityType ?? ''),
+          String(activity.subtype ?? ''),
+          String(activity.amount ?? ''),
+          String(activity.quantity ?? ''),
+          String(activity.unitPrice ?? ''),
+          String(activity.fee ?? ''),
+          normalizeKeyComment(activity.comment),
+        ].join('|');
+        const idempotencyKey = `wfi-${hashToBase36(idempotencySeed)}`;
+
+        const metadataJson = JSON.stringify({
+          sourceSystem: 'wealthfolio-importer',
+          sourceGroupId,
+          sourceLineNumber: activity.lineNumber ?? null,
+          idempotencyKey,
+        });
+
+        const payload: ActivityCreate & {
+          notes?: string | null;
+          idempotencyKey?: string;
+        } = {
+          accountId: selectedAccount.id,
+          activityType: activity.activityType,
+          subtype: activity.subtype ?? null,
+          activityDate: activity.date ?? '',
+          sourceGroupId,
+          symbol,
+          quantity: activity.quantity ?? null,
+          unitPrice: activity.unitPrice ?? null,
+          amount: activity.amount ?? null,
+          currency: currencyValue,
+          fee: activity.fee ?? null,
+          comment: activity.comment ?? null,
+          fxRate: activity.fxRate ?? null,
+          metadata: metadataJson,
+        };
+
+        // WF 3.x: some builds persist/display this field as `notes`.
+        payload.notes = payload.comment ?? null;
+
+        // WF backend uses this for de-duplication.
+        payload.idempotencyKey = idempotencyKey;
+
+        return payload;
+      };
+
+      let importedCount = 0;
+      let failedCount = 0;
+      for (const activity of validated) {
+        try {
+          await ctx.api.activities.create(toActivityCreate(activity));
+          importedCount += 1;
+        } catch {
+          failedCount += 1;
+        }
+      }
+
       const skippedMessage =
         skippedExisting > 0
           ? ` Skipped ${skippedExisting} duplicate${skippedExisting === 1 ? '' : 's'}.`
           : '';
-      setImportSuccess(
-        `Imported ${imported.length} activit${imported.length === 1 ? 'y' : 'ies'}.${skippedMessage}`,
-      );
+
+      const trackingWarning =
+        selectedAccount.trackingMode && selectedAccount.trackingMode !== 'TRANSACTIONS'
+          ? ' Note: this account is not in TRANSACTIONS tracking mode; holdings may not update until you switch it.'
+          : '';
+
+      if (failedCount > 0) {
+        setImportError(
+          `Imported ${importedCount} activit${importedCount === 1 ? 'y' : 'ies'}, but ${failedCount} failed.${skippedMessage}${trackingWarning}`,
+        );
+      } else {
+        setImportSuccess(
+          `Imported ${importedCount} activit${importedCount === 1 ? 'y' : 'ies'}.${skippedMessage}${trackingWarning}`,
+        );
+      }
+
+      try {
+        await ctx.api.portfolio.recalculate();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        ctx.api.logger.warn(`Portfolio recalculation after import failed (${message}).`);
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Import failed.';
       setImportError(message);

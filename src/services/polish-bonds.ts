@@ -477,44 +477,37 @@ const formatBondName = (seriesId: string, description?: string) => {
   return `${seriesId} ${label}`.trim();
 };
 
-const buildQuote = (symbol: string, quoteDate: Date, price: number): Quote => {
+const buildQuote = (
+  assetId: string,
+  quoteDate: Date,
+  price: number,
+  existing?: Quote,
+): Quote => {
   const dateISO = formatDateISO(quoteDate);
   const timestamp = `${dateISO}T00:00:00.000Z`;
-  const datePart = dateISO.replace(/-/g, '');
-  const normalizedSymbol = normalizeSymbol(symbol);
+  const currency = existing?.currency ?? 'PLN';
   return {
-    id: `${datePart}_${normalizedSymbol}`,
-    createdAt: timestamp,
-    dataSource: 'MANUAL',
+    id: existing?.id ?? crypto.randomUUID(),
+    createdAt: existing?.createdAt ?? timestamp,
+    dataSource: existing?.dataSource ?? 'MANUAL',
     timestamp,
-    symbol: normalizedSymbol,
+    assetId,
     open: price,
     high: price,
     low: price,
     close: price,
     adjclose: price,
     volume: 0,
-    currency: 'PLN',
+    currency,
   };
 };
 
 const buildQuotePayload = (
-  symbol: string,
+  assetId: string,
   quoteDate: Date,
   price: number,
   existing?: Quote,
-): Quote => {
-  const base = buildQuote(symbol, quoteDate, price);
-  if (!existing) {
-    return base;
-  }
-  return {
-    ...base,
-    id: existing.id ?? base.id,
-    createdAt: existing.createdAt ?? base.createdAt,
-    dataSource: existing.dataSource ?? base.dataSource,
-  };
-};
+) => buildQuote(assetId, quoteDate, price, existing);
 
 const priceChanged = (existing: Quote, nextPrice: number) => {
   const existingPrice =
@@ -544,6 +537,43 @@ const extractQuoteDateKey = (quote: Quote) => {
     return `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
   }
   return null;
+};
+
+const resolveAssetIdForSymbol = async (ctx: AddonContext, symbol: string) => {
+  const normalizedSymbol = normalizeSymbol(symbol);
+  if (!normalizedSymbol) {
+    return null;
+  }
+
+  try {
+    const results = await ctx.api.market.searchTicker(normalizedSymbol);
+    const exact = results.find(
+      (result) =>
+        normalizeSymbol(result.symbol) === normalizedSymbol &&
+        typeof result.existingAssetId === 'string' &&
+        result.existingAssetId.length > 0,
+    );
+    if (exact?.existingAssetId) {
+      return exact.existingAssetId;
+    }
+  } catch {
+    // ignore and fall back to activity search
+  }
+
+  try {
+    const response = await ctx.api.activities.search(
+      1,
+      5,
+      { symbol: normalizedSymbol },
+      '',
+    );
+    const hit = response.data.find(
+      (row) => normalizeSymbol(row.assetSymbol) === normalizedSymbol,
+    );
+    return hit?.assetId ?? null;
+  } catch {
+    return null;
+  }
 };
 
 const round2 = (value: number) => Math.round(value * 100) / 100;
@@ -744,26 +774,28 @@ const fetchHoldingSymbols = async (ctx: AddonContext) => {
 
 const updateQuotesInBatches = async (
   ctx: AddonContext,
+  assetId: string,
   quotes: Quote[],
   batchSize = 50,
 ) => {
   for (let i = 0; i < quotes.length; i += batchSize) {
     const batch = quotes.slice(i, i + batchSize);
     await Promise.all(
-      batch.map((quote) => ctx.api.quotes.update(quote.symbol, quote)),
+      batch.map((quote) => ctx.api.quotes.update(assetId, quote)),
     );
   }
 };
 
 const ensureBondMetadata = async (
   ctx: AddonContext,
+  assetId: string,
   symbol: string,
   bondType: string,
   seriesId: string,
 ) => {
-  let profile: { name?: string | null; assetClass?: string | null; assetSubClass?: string | null; countries?: string | null; sectors?: string | null; notes?: string | null } | null = null;
+  let profile: { name?: string | null; displayCode?: string | null; quoteMode?: string | null } | null = null;
   try {
-    profile = await ctx.api.assets.getProfile(symbol);
+    profile = await ctx.api.assets.getProfile(assetId);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     ctx.api.logger.warn(`Polish bonds: failed to load profile for ${symbol} (${message}).`);
@@ -779,35 +811,26 @@ const ensureBondMetadata = async (
     ? formatBondName(seriesId, description)
     : undefined;
 
-  const assetClass = profile.assetClass?.trim() || 'Bonds';
-  const assetSubClass = profile.assetSubClass?.trim() || 'Government';
-  const countries =
-    profile.countries && profile.countries.trim().length > 0
-      ? profile.countries
-      : JSON.stringify([{ name: 'Poland', weight: 100 }]);
-  const sectors = profile.sectors ?? '';
-  const notes = profile.notes ?? '';
+  const normalizedSymbol = normalizeSymbol(symbol);
+  const displayCode =
+    (!profile.displayCode || !profile.displayCode.trim()) && normalizedSymbol
+      ? normalizedSymbol
+      : undefined;
 
-  const needsUpdate =
-    !profile.assetClass ||
-    !profile.assetSubClass ||
-    !profile.countries ||
-    !profile.countries.trim() ||
-    !!name;
+  const needsProfileUpdate = !!name || !!displayCode;
+  const needsQuoteModeUpdate = profile.quoteMode !== 'MANUAL';
 
-  if (!needsUpdate) {
-    return;
+  if (needsProfileUpdate) {
+    await ctx.api.assets.updateProfile({
+      id: assetId,
+      name,
+      displayCode,
+    });
   }
 
-  await ctx.api.assets.updateProfile({
-    symbol,
-    name,
-    sectors,
-    countries,
-    notes,
-    assetClass,
-    assetSubClass,
-  });
+  if (needsQuoteModeUpdate) {
+    await ctx.api.assets.updateQuoteMode(assetId, 'MANUAL');
+  }
 };
 
 export const startPolishBondTracking = (ctx: AddonContext) => {
@@ -846,6 +869,8 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
         return;
       }
 
+      const assetIdCache = new Map<string, string | null>();
+
       for (const symbol of symbols) {
         if (processedSymbols.has(symbol)) {
           continue;
@@ -858,6 +883,21 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
         }
         const match = parseBondSymbol(symbol);
         if (!match) {
+          continue;
+        }
+
+        let assetId = assetIdCache.get(symbol);
+        if (assetId === undefined) {
+          assetId = await resolveAssetIdForSymbol(ctx, symbol);
+          assetIdCache.set(symbol, assetId);
+        }
+        if (!assetId) {
+          if (!skippedSymbols.has(symbol)) {
+            ctx.api.logger.warn(
+              `Polish bonds: unable to resolve assetId for ${symbol}; skipping quote updates.`,
+            );
+            skippedSymbols.add(symbol);
+          }
           continue;
         }
 
@@ -890,7 +930,7 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
 
           if (!metadataUpdatedSymbols.has(symbol)) {
             try {
-              await ensureBondMetadata(ctx, symbol, match.bondType, match.seriesId);
+              await ensureBondMetadata(ctx, assetId, symbol, match.bondType, match.seriesId);
               metadataUpdatedSymbols.add(symbol);
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error);
@@ -903,7 +943,7 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
           let existingDates = new Set<string>();
           const existingByDate = new Map<string, Quote>();
           try {
-            const history = await ctx.api.quotes.getHistory(symbol);
+            const history = await ctx.api.quotes.getHistory(assetId);
             existingDates = new Set(
               history
                 .map((quote) => extractQuoteDateKey(quote))
@@ -929,19 +969,19 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
             if (existing) {
               if (priceChanged(existing, value.price)) {
                 quotesToAdd.push(
-                  buildQuotePayload(symbol, value.date, value.price, existing),
+                  buildQuotePayload(assetId, value.date, value.price, existing),
                 );
               }
               return;
             }
             if (!existingDates.has(dateKey)) {
-              quotesToAdd.push(buildQuotePayload(symbol, value.date, value.price));
+              quotesToAdd.push(buildQuotePayload(assetId, value.date, value.price));
             }
           });
 
           if (quotesToAdd.length > 0) {
             suspendPortfolioRefresh();
-            await updateQuotesInBatches(ctx, quotesToAdd);
+            await updateQuotesInBatches(ctx, assetId, quotesToAdd);
           }
 
           const lastPrice = scheduledValues[scheduledValues.length - 1]?.price;

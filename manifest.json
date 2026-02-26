@@ -1,11 +1,11 @@
 {
   "id": "wealthfolio-importer",
   "name": "Wealthfolio Importer",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A Wealthfolio addon for importing data from different sources",
   "author": "Cloudburst",
   "main": "dist/addon.js",
-  "sdkVersion": "1.0.0",
+  "sdkVersion": "3.0.0",
   "enabled": true,
   "permissions": [
     {
@@ -20,7 +20,7 @@
     },
     {
       "category": "activities",
-      "functions": ["getAll", "saveMany", "checkImport", "import"],
+      "functions": ["getAll", "search", "create", "saveMany", "checkImport", "import"],
       "purpose": "Read, validate, import, and bulk delete activities"
     },
     {
@@ -35,8 +35,8 @@
     },
     {
       "category": "assets",
-      "functions": ["getProfile", "updateProfile"],
-      "purpose": "Set Polish bond metadata for class, subclass, country, and name"
+      "functions": ["getProfile", "updateProfile", "updateQuoteMode"],
+      "purpose": "Set Polish bond metadata (name/display code) and force MANUAL quote mode"
     },
     {
       "category": "events",

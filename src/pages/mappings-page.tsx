@@ -2,8 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
   ActivityDetails,
   AddonContext,
-  Holding,
-  QuoteSummary,
+  SymbolSearchResult,
 } from '@wealthfolio/addon-sdk';
 import {
   Badge,
@@ -66,7 +65,7 @@ const SymbolSuggestionInput = ({
   disabled = false,
 }: SymbolSuggestionInputProps) => {
   const [open, setOpen] = useState(false);
-  const [suggestions, setSuggestions] = useState<QuoteSummary[]>([]);
+  const [suggestions, setSuggestions] = useState<SymbolSearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
@@ -80,14 +79,7 @@ const SymbolSuggestionInput = ({
     }
 
     const handle = setTimeout(() => {
-      const marketApi =
-        (ctx.api as typeof ctx.api & { marketData?: typeof ctx.api.market }).market ??
-        (ctx.api as { marketData?: typeof ctx.api.market }).marketData;
-      if (!marketApi) {
-        setSearchError('Market search unavailable.');
-        setIsSearching(false);
-        return;
-      }
+      const marketApi = ctx.api.market;
       setIsSearching(true);
       setSearchError(null);
       marketApi
@@ -316,26 +308,33 @@ export default function MappingsPage({ ctx }: MappingsPageProps) {
         }
         symbolToAssetId.set(symbol, activity.assetId);
       });
-      const accounts = await ctx.api.accounts.getAll();
-      const holdingsByAccount = await Promise.all(
-        accounts.map(async (account) => {
-          try {
-            return await ctx.api.portfolio.getHoldings(account.id);
-          } catch {
-            return [] as Holding[];
-          }
-        }),
+
+      const uniqueTargets = Array.from(
+        new Set(
+          Object.values(mapping)
+            .map((value) => normalizeSymbol(value))
+            .filter(Boolean),
+        ),
       );
-      holdingsByAccount.flat().forEach((holding) => {
-        const symbol = normalizeSymbol(holding.instrument?.symbol ?? '');
-        const assetId = holding.instrument?.id;
-        if (!symbol || !assetId) {
-          return;
+      for (const targetSymbol of uniqueTargets) {
+        if (symbolToAssetId.has(targetSymbol)) {
+          continue;
         }
-        if (!symbolToAssetId.has(symbol)) {
-          symbolToAssetId.set(symbol, assetId);
+        try {
+          const results = await ctx.api.market.searchTicker(targetSymbol);
+          const exact = results.find(
+            (result) =>
+              normalizeSymbol(result.symbol) === targetSymbol &&
+              typeof result.existingAssetId === 'string' &&
+              result.existingAssetId.length > 0,
+          );
+          if (exact?.existingAssetId) {
+            symbolToAssetId.set(targetSymbol, exact.existingAssetId);
+          }
+        } catch {
+          // ignore; unresolved targets will be reported later
         }
-      });
+      }
 
       const missingTargets = new Set<string>();
       const missingMappingCounts = new Map<string, number>();
@@ -364,13 +363,12 @@ export default function MappingsPage({ ctx }: MappingsPageProps) {
             accountId: activity.accountId,
             activityType: activity.activityType,
             activityDate: activity.date,
-            assetId: targetAssetId,
+            symbol: { id: targetAssetId },
             quantity: activity.quantity,
             unitPrice: activity.unitPrice,
             amount: activity.amount,
             currency: activity.currency,
             fee: activity.fee,
-            isDraft: activity.isDraft,
             comment: activity.comment ?? null,
           },
         ];

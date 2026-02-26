@@ -1,6 +1,6 @@
 {
   "name": "wealthfolio-wealthfolio-importer-addon",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A Wealthfolio addon for importing data from different sources",
   "type": "module",
   "main": "dist/addon.js",
@@ -20,21 +20,21 @@
     "type-check": "tsc --noEmit"
   },
   "dependencies": {
-    "@wealthfolio/addon-sdk": "^2.0.0",
-    "@wealthfolio/ui": "^2.0.0",
+    "@wealthfolio/addon-sdk": "^3.0.0",
+    "@wealthfolio/ui": "^3.0.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.2.0",
-    "@types/node": "^20.19.33",
+    "@tailwindcss/vite": "^4.2.1",
+    "@types/node": "^20.19.34",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.1.4",
     "@wealthfolio/addon-dev-tools": "^2.0.0",
     "rollup-plugin-external-globals": "^0.13.0",
-    "tailwindcss": "^4.2.0",
+    "tailwindcss": "^4.2.1",
     "typescript": "^5.9.3",
     "vite": "^7.3.1"
   }

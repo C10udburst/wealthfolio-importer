@@ -1561,6 +1561,15 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
             <Button
               variant="outline"
               onClick={() =>
+                ctx.api.navigation.navigate('/addon/wealthfolio-importer/quote-scraper')
+              }
+            >
+              <Icons.Import className="mr-2 h-4 w-4" />
+              Quote scraper
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() =>
                 ctx.api.navigation.navigate('/addon/wealthfolio-importer/delete')
               }
             >

@@ -4,7 +4,9 @@ import { Icons } from '@wealthfolio/ui';
 import BulkDeletePage from './pages/bulk-delete-page';
 import ImporterPage from './pages/importer-page';
 import MappingsPage from './pages/mappings-page';
+import QuoteScraperPage from './pages/quote-scraper-page';
 import { startPolishBondTracking } from './services/polish-bonds';
+import { startQuoteScraperTracking } from './services/quote-scraper';
 
 export default function enable(ctx: AddonContext) {
   // Add a sidebar item
@@ -35,7 +37,14 @@ export default function enable(ctx: AddonContext) {
     component: React.lazy(() => Promise.resolve({ default: MappingsWrapper })),
   });
 
+  const QuoteScraperWrapper = () => <QuoteScraperPage ctx={ctx} />;
+  ctx.router.add({
+    path: '/addon/wealthfolio-importer/quote-scraper',
+    component: React.lazy(() => Promise.resolve({ default: QuoteScraperWrapper })),
+  });
+
   const stopPolishBondTracking = startPolishBondTracking(ctx);
+  const stopQuoteScraperTracking = startQuoteScraperTracking(ctx);
 
   // Cleanup on disable
   ctx.onDisable(() => {
@@ -44,6 +53,13 @@ export default function enable(ctx: AddonContext) {
     } catch (err) {
       ctx.api.logger.error(
         `Failed to stop bond tracking: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+    try {
+      stopQuoteScraperTracking();
+    } catch (err) {
+      ctx.api.logger.error(
+        `Failed to stop quote scraper tracking: ${err instanceof Error ? err.message : String(err)}`,
       );
     }
     try {

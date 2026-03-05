@@ -1483,16 +1483,13 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
           amount: activity.amount ?? null,
           currency: currencyValue,
           fee: activity.fee ?? null,
-          comment: activity.comment ?? null,
+          //comment: activity.comment ?? null,
+          notes: activity.comment ?? null,
           fxRate: activity.fxRate ?? null,
           metadata: metadataJson,
+          // WF backend uses this for de-duplication.
+          idempotencyKey: idempotencyKey,
         };
-
-        // WF 3.x: some builds persist/display this field as `notes`.
-        payload.notes = payload.comment ?? null;
-
-        // WF backend uses this for de-duplication.
-        payload.idempotencyKey = idempotencyKey;
 
         return payload;
       };

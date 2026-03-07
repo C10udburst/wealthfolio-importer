@@ -159,23 +159,44 @@ const parsePekaoAccountsDate = (value: unknown) => {
     return null;
   }
 
+  const buildValidatedDate = (year: number, month: number, day: number) => {
+    if (!Number.isInteger(day) || !Number.isInteger(month) || !Number.isInteger(year)) {
+      return null;
+    }
+    if (month < 1 || month > 12 || day < 1 || day > 31) {
+      return null;
+    }
+
+    const parsed = new Date(year, month - 1, day);
+    if (
+      parsed.getFullYear() !== year ||
+      parsed.getMonth() !== month - 1 ||
+      parsed.getDate() !== day
+    ) {
+      return null;
+    }
+
+    return parsed;
+  };
+
+  const dayMonthYearMatch = text.match(/^(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{4})$/);
+  if (dayMonthYearMatch) {
+    const [, dayText, monthText, yearText] = dayMonthYearMatch;
+    return buildValidatedDate(Number(yearText), Number(monthText), Number(dayText));
+  }
+
+  const isoDateMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
+  if (isoDateMatch) {
+    const [, yearText, monthText, dayText] = isoDateMatch;
+    return buildValidatedDate(Number(yearText), Number(monthText), Number(dayText));
+  }
+
   const direct = new Date(text);
   if (!Number.isNaN(direct.valueOf())) {
     return direct;
   }
 
-  const normalized = text.replace(/\./g, '-');
-  const parts = normalized.split('-');
-  if (parts.length !== 3) {
-    return null;
-  }
-
-  const [day, month, year] = parts.map((part) => Number(part));
-  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) {
-    return null;
-  }
-
-  return new Date(year, month - 1, day);
+  return null;
 };
 
 const mapPekaoAccountsActivityType = (operationType: string, title: string, amount: number) => {
@@ -197,7 +218,7 @@ const mapPekaoAccountsActivityType = (operationType: string, title: string, amou
   }
 
   if (combined.includes('przelew') || combined.includes('transfer')) {
-    return amount >= 0 ? 'TRANSFER_IN' : 'TRANSFER_OUT';
+    return amount >= 0 ? 'DEPOSIT' : 'WITHDRAWAL';
   }
 
   if (

@@ -244,10 +244,11 @@ const fetchLatestBondsUrl = async (ctx: AddonContext): Promise<string> => {
       const downloadAttr = link.getAttribute('download') ?? '';
       const textContent = link.textContent ?? '';
 
+      const textToCheck = [ariaLabel, downloadAttr, textContent].join(' ').toLowerCase();
+
       if (
-        ariaLabel.includes('Dane_dotyczace_obligacji_detalicznych.xls') ||
-        downloadAttr.includes('Dane_dotyczace_obligacji_detalicznych.xls') ||
-        textContent.includes('Dane_dotyczace_obligacji_detalicznych.xls')
+        textToCheck.includes('dane_dotyczace_obligacji_detalicznych.xls') ||
+        textToCheck.includes('dane dotyczące obligacji detalicznych plik w formacie xls')
       ) {
         const href = link.getAttribute('href');
         if (href) {

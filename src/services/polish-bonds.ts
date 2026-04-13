@@ -591,6 +591,20 @@ const getBuyoutDate = (series: BondSeries, purchaseDate: Date) => {
   return addMonths(purchaseDate, termMonths);
 };
 
+const isBuyoutDatePassed = (series: BondSeries, purchaseDay?: number) => {
+  const purchaseDate = resolvePurchaseDate(
+    series.saleStart,
+    series.saleEnd,
+    purchaseDay,
+  );
+  const buyoutDate = getBuyoutDate(series, purchaseDate);
+  if (!buyoutDate) {
+    return false;
+  }
+
+  return toLocalDate(new Date()) > buyoutDate;
+};
+
 const buildPeriods = (
   start: Date,
   end: Date,
@@ -625,7 +639,7 @@ const buildPeriods = (
 
 type DailyValue = { date: Date; price: number };
 
-const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {    
+const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
   const purchaseDate = resolvePurchaseDate(
     series.saleStart,
     series.saleEnd,
@@ -637,6 +651,9 @@ const buildScheduledValues = (series: BondSeries, purchaseDay?: number) => {
   }
 
   const today = toLocalDate(new Date());
+  if (today > buyoutDate) {
+    return null;
+  }
   const valuesByDate = new Map<string, DailyValue>();
   const addValue = (date: Date, price: number) => {
     valuesByDate.set(formatDateISO(date), { date, price });
@@ -915,10 +932,21 @@ export const startPolishBondTracking = (ctx: AddonContext) => {
             continue;
           }
 
+          if (isBuyoutDatePassed(series, match.purchaseDay)) {
+            if (!skippedSymbols.has(symbol)) {
+              ctx.api.logger.info(
+                `Polish bonds: ${symbol} was bought out already; skipping quote updates.`,
+              );
+              skippedSymbols.add(symbol);
+            }
+            continue;
+          }
+
           const scheduledValues = buildScheduledValues(
             series,
             match.purchaseDay,
           );
+
           if (!scheduledValues || scheduledValues.length === 0) {
             if (!skippedSymbols.has(symbol)) {
               ctx.api.logger.warn(

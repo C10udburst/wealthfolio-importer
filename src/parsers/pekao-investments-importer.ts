@@ -55,6 +55,13 @@ const setTimeForTransaction = (date: Date, transactionIndex: number): Date => {
   return result;
 };
 
+const formatPekaoDateKey = (date: Date) => {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+};
+
 const parsePekaoBondsCashOperations = (
   doc: Document,
   options: ParseOptions,
@@ -62,6 +69,8 @@ const parsePekaoBondsCashOperations = (
 ) => {
   const warnings: string[] = [];
   const records: ActivityImport[] = [];
+  const quantityBySeriesKey = new Map<string, number>();
+  const pendingQuantityRecordIndices = new Map<string, number[]>();
   const table =
     doc.querySelector('pekao-bonds-history-cash-operations-table table') ??
     findPekaoCashOperationsTable(doc);
@@ -128,6 +137,13 @@ const parsePekaoBondsCashOperations = (
     }
 
     const bondMatch = parseBondTitle(title);
+    const operationBondSeriesId = extractPekaoBondSeriesIdFromTitle(title);
+    const operationBondQuantity = extractPekaoBondQuantityFromTitle(title);
+    const seriesKey =
+      operationBondSeriesId !== null
+        ? `${formatPekaoDateKey(currentDate)}|${operationBondSeriesId}`
+        : null;
+
     if (bondMatch) {
       const purchaseDay = currentDate.getDate();
       const dayToken = String(purchaseDay).padStart(2, '0');
@@ -170,7 +186,16 @@ const parsePekaoBondsCashOperations = (
       currency,
       currentDate,
     );
-    records.push({
+    const isBondRelatedCashActivity =
+      activityType === 'SELL' || activityType === 'TAX';
+    const quantityFromHistory =
+      seriesKey !== null ? quantityBySeriesKey.get(seriesKey) : undefined;
+    const quantity =
+      operationBondQuantity !== null
+        ? operationBondQuantity
+        : quantityFromHistory;
+
+    const record: ActivityImport = {
       accountId: options.accountId,
       activityType,
       date: setTimeForTransaction(currentDate, transactionCountForDate),
@@ -181,7 +206,39 @@ const parsePekaoBondsCashOperations = (
       isValid: true,
       comment: buildPekaoComment(title, type),
       lineNumber: index + 1,
-    });
+      quantity,
+      unitPrice:
+        quantity !== undefined && quantity !== 0
+          ? amount / quantity
+          : undefined,
+    };
+
+    if (isBondRelatedCashActivity && seriesKey !== null) {
+      if (quantity !== undefined) {
+        quantityBySeriesKey.set(seriesKey, quantity);
+        const pendingIndices = pendingQuantityRecordIndices.get(seriesKey);
+        if (pendingIndices && pendingIndices.length > 0) {
+          pendingIndices.forEach((recordIndex) => {
+            const pendingRecord = records[recordIndex];
+            if (!pendingRecord) {
+              return;
+            }
+            pendingRecord.quantity = quantity;
+            pendingRecord.unitPrice =
+              typeof pendingRecord.amount === 'number' && quantity !== 0
+                ? pendingRecord.amount / quantity
+                : undefined;
+          });
+          pendingQuantityRecordIndices.delete(seriesKey);
+        }
+      } else {
+        const pendingIndices = pendingQuantityRecordIndices.get(seriesKey) ?? [];
+        pendingIndices.push(records.length);
+        pendingQuantityRecordIndices.set(seriesKey, pendingIndices);
+      }
+    }
+
+    records.push(record);
     transactionCountForDate++;
   });
 
@@ -225,6 +282,19 @@ const parseBondTitle = (title: string) => {
     quantity: Number.isFinite(quantity) ? quantity : null,
     seriesId: match[2].toUpperCase(),
   };
+};
+
+const extractPekaoBondQuantityFromTitle = (title: string) => {
+  const normalized = sanitizePekaoText(title);
+  const match =
+    normalized.match(/:\s*(\d+)\s*-\s*([A-Z]{3}\d{4})\b/i) ??
+    normalized.match(/\b(\d+)\s*-\s*([A-Z]{3}\d{4})\b/i);
+  if (!match) {
+    return null;
+  }
+
+  const quantity = Number(match[1]);
+  return Number.isFinite(quantity) ? quantity : null;
 };
 
 const extractCurrency = (cell: Element | null) => {
@@ -276,6 +346,12 @@ const mapPekaoCashActivity = (title: string, type: string, amount: number) => {
   if (combined.includes('wyp.ods.osp')) {
     return 'DIVIDEND';
   }
+  if (combined.includes('pod.wyk.osp')) {
+    return 'TAX';
+  }
+  if (combined.includes('wyk.t.osp')) {
+    return 'SELL';
+  }
 
   return amount >= 0 ? 'DEPOSIT' : 'WITHDRAWAL';
 };
@@ -303,7 +379,7 @@ const resolvePekaoCashSymbol = (
   currency: string,
   payoutDate: Date,
 ) => {
-  if (activityType === 'DIVIDEND' || activityType === 'TAX') {
+  if (activityType === 'DIVIDEND' || activityType === 'TAX' || activityType === 'SELL') {
     const seriesId = extractPekaoBondSeriesIdFromTitle(title);
     if (seriesId) {
       return buildBondSymbolWithDay(seriesId, payoutDate);

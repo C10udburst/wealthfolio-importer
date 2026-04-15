@@ -160,6 +160,9 @@ const normalizeImportNumber = (value: number | undefined) => {
   return Number.isFinite(value) ? Math.abs(value) : value;
 };
 
+const getActivitySymbol = (activity: { assetSymbol?: string; symbol?: string }) =>
+  activity.assetSymbol ?? activity.symbol ?? '';
+
 const cn = (...values: Array<string | false | null | undefined>) =>
   values.filter(Boolean).join(' ');
 
@@ -671,17 +674,87 @@ const normalizeKeyComment = (value: string | undefined) => {
   return value.trim().replace(/\s+/g, ' ').toLowerCase();
 };
 
-const buildActivityKey = (
-  date: Date | string | undefined,
+const DAY_IN_MS = 24 * 60 * 60 * 1000;
+const COMMENT_MATCH_DATE_TOLERANCE_DAYS = 2;
+
+const parseDateValue = (value: Date | string | undefined) => {
+  if (!value) {
+    return null;
+  }
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.valueOf()) ? null : date;
+};
+
+const isSameUtcDay = (left: Date, right: Date) =>
+  left.getUTCFullYear() === right.getUTCFullYear()
+  && left.getUTCMonth() === right.getUTCMonth()
+  && left.getUTCDate() === right.getUTCDate();
+
+const buildAmountCurrencyKey = (
   amount: number | undefined,
   currency: string | undefined,
   fallbackCurrency?: string | null,
-  comment?: string | undefined,
 ) =>
-  `${normalizeKeyDate(date)}|${normalizeKeyAmount(amount)}|${normalizeKeyCurrency(
+  `${normalizeKeyAmount(amount)}|${normalizeKeyCurrency(
     currency,
     fallbackCurrency,
-  )}|${normalizeKeyComment(comment)}`;
+  )}`;
+
+interface DuplicateMatchCandidate {
+  date: Date | string | undefined;
+  amount: number | undefined;
+  currency: string | undefined;
+  comment?: string;
+}
+
+const isDuplicateMatch = (
+  imported: DuplicateMatchCandidate,
+  existing: DuplicateMatchCandidate,
+  fallbackCurrency: string | null,
+) => {
+  const importedKey = buildAmountCurrencyKey(
+    imported.amount,
+    imported.currency,
+    fallbackCurrency,
+  );
+  const existingKey = buildAmountCurrencyKey(
+    existing.amount,
+    existing.currency,
+    fallbackCurrency,
+  );
+
+  // Amount (and effective currency) must match exactly before any date/comment checks.
+  if (!importedKey || importedKey !== existingKey) {
+    return false;
+  }
+
+  const importedDate = parseDateValue(imported.date);
+  const existingDate = parseDateValue(existing.date);
+  if (!importedDate || !existingDate) {
+    return false;
+  }
+
+  const importedComment = normalizeKeyComment(imported.comment);
+  const existingComment = normalizeKeyComment(existing.comment);
+  const bothHaveComments = Boolean(importedComment && existingComment);
+  const bothCommentsMissing = !importedComment && !existingComment;
+
+  if (bothHaveComments) {
+    if (importedComment !== existingComment) {
+      return false;
+    }
+
+    return Math.abs(importedDate.getTime() - existingDate.getTime())
+      <= COMMENT_MATCH_DATE_TOLERANCE_DAYS * DAY_IN_MS;
+  }
+
+  if (bothCommentsMissing) {
+    // Without comment context, keep matching strict and only allow same calendar day.
+    return isSameUtcDay(importedDate, existingDate);
+  }
+
+  return false;
+};
 
 const applySymbolMappingsToActivities = (activities: ActivityImport[]) => {
   const mappings = loadSymbolMappings();
@@ -1296,31 +1369,83 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
 
     try {
       const existingActivities = await ctx.api.activities.getAll(selectedAccount.id);
-      const existingKeys = new Set(
-        existingActivities.map((activity) => {
-          const parsedAmount =
-            typeof activity.amount === 'string' && activity.amount.trim()
-              ? Number(activity.amount)
-              : undefined;
-          return buildActivityKey(
-            activity.date instanceof Date ? activity.date : new Date(activity.date),
-            Number.isFinite(parsedAmount) ? parsedAmount : undefined,
-            activity.currency,
-            selectedAccount.currency,
-            activity.comment ?? '',
-          );
-        }),
-      );
+      const existingSymbolLookup = new Set<string>();
+
+      existingActivities.forEach((activity) => {
+        const symbol = getActivitySymbol(
+          activity as { assetSymbol?: string; symbol?: string },
+        )
+          .trim()
+          .toUpperCase();
+        if (symbol && !symbol.startsWith('$CASH-')) {
+          existingSymbolLookup.add(symbol);
+        }
+      });
+
+      try {
+        const allActivities = await ctx.api.activities.getAll();
+        allActivities.forEach((activity) => {
+          const symbol = getActivitySymbol(
+            activity as { assetSymbol?: string; symbol?: string },
+          )
+            .trim()
+            .toUpperCase();
+          if (symbol && !symbol.startsWith('$CASH-')) {
+            existingSymbolLookup.add(symbol);
+          }
+        });
+      } catch {
+        // ignore; selected-account symbols are already included
+      }
+
+      const existingByAmountAndCurrency = new Map<
+      string,
+      DuplicateMatchCandidate[]
+      >();
+
+      existingActivities.forEach((activity) => {
+        const parsedAmount =
+          typeof activity.amount === 'string' && activity.amount.trim()
+            ? Number(activity.amount)
+            : undefined;
+        const normalizedAmount = Number.isFinite(parsedAmount) ? parsedAmount : undefined;
+        const key = buildAmountCurrencyKey(
+          normalizedAmount,
+          activity.currency,
+          selectedAccount.currency,
+        );
+
+        if (!key) {
+          return;
+        }
+
+        const bucket = existingByAmountAndCurrency.get(key) ?? [];
+        bucket.push({
+          date: activity.date,
+          amount: normalizedAmount,
+          currency: activity.currency,
+          comment: activity.comment ?? undefined,
+        });
+        existingByAmountAndCurrency.set(key, bucket);
+      });
+
       let skippedExisting = 0;
       const dedupedActivities = preparedActivities.filter((activity) => {
-        const key = buildActivityKey(
-          activity.date,
+        const key = buildAmountCurrencyKey(
           activity.amount,
           activity.currency,
           selectedAccount.currency,
-          activity.comment ?? '',
         );
-        if (existingKeys.has(key)) {
+        if (!key) {
+          return true;
+        }
+
+        const candidates = existingByAmountAndCurrency.get(key);
+        const hasDuplicate = candidates?.some((existing) =>
+          isDuplicateMatch(activity, existing, selectedAccount.currency),
+        );
+
+        if (hasDuplicate) {
           skippedExisting += 1;
           return false;
         }
@@ -1357,17 +1482,25 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
         const symbolToMic = new Map<string, string>();
         await Promise.all(
           uniqueSymbols.map(async (symbol) => {
+            const normalizedSymbol = symbol.trim().toUpperCase();
             try {
               const results = await ctx.api.market.searchTicker(symbol);
               const exact = results.find(
                 (result) => result.symbol?.toUpperCase() === symbol.toUpperCase(),
               );
+              if (exact?.existingAssetId) {
+                existingSymbolLookup.add(normalizedSymbol);
+              }
               const mic = exact?.exchangeMic;
               if (mic && mic.trim()) {
                 symbolToMic.set(symbol, mic);
               }
             } catch {
               // ignore
+            }
+
+            if (existingSymbolLookup.has(normalizedSymbol)) {
+              return;
             }
           }),
         );
@@ -1406,6 +1539,8 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
 
       const toActivityCreate = (activity: ActivityImport): ActivityCreate => {
         const symbolValue = typeof activity.symbol === 'string' ? activity.symbol.trim() : '';
+        const normalizedSymbol = symbolValue.toUpperCase();
+        const symbolAlreadyExists = existingSymbolLookup.has(normalizedSymbol);
         const currencyValue =
           typeof activity.currency === 'string' && activity.currency.trim()
             ? activity.currency.trim()
@@ -1429,6 +1564,11 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                   symbol: symbolValue,
                   exchangeMic: resolvedMic,
                 }
+              : symbolAlreadyExists
+                ? {
+                    // Reference existing assets without forcing quote mode/profile changes.
+                    symbol: symbolValue,
+                  }
               : {
                   // Allow importing custom/non-market symbols (e.g., Polish bonds)
                   symbol: symbolValue,

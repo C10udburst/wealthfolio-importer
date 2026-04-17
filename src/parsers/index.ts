@@ -3,6 +3,7 @@ import { PayPalImporter } from './paypal-importer';
 import { PekaoAccountsImporter } from './pekao-accounts-importer';
 import { PekaoInvestmentsImporter } from './pekao-investments-importer';
 import { XtbImporter } from './xtb-importer';
+import { XtbLegacyImporter } from './xtb-legacy-importer';
 import type { ImportDetection, ImportSourceId } from './types';
 
 const importers = [
@@ -10,6 +11,7 @@ const importers = [
   new PekaoAccountsImporter(),
   new PekaoInvestmentsImporter(),
   new XtbImporter(),
+  new XtbLegacyImporter(),
   new PayPalImporter(),
 ];
 

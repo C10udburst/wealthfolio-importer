@@ -1,6 +1,12 @@
 import type { ActivityImport } from '@wealthfolio/addon-sdk';
 
-export type ImportSourceId = 'ing' | 'pekao' | 'pekao-accounts' | 'xtb' | 'paypal';
+export type ImportSourceId =
+  | 'ing'
+  | 'pekao'
+  | 'pekao-accounts'
+  | 'xtb'
+  | 'xtb-legacy'
+  | 'paypal';
 
 export interface ImportParseResult {
   records: ActivityImport[];

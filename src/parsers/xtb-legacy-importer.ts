@@ -1,12 +1,11 @@
 import * as XLSX from 'xlsx';
-import JSZip from 'jszip';
 import type { ActivityImport } from '@wealthfolio/addon-sdk';
 import { BaseImporter } from './base-importer';
 import type { ImportDetection, ImportParseResult, ParseOptions } from './types';
 
-const REQUIRED_HEADERS = ['Type', 'Ticker', 'Instrument', 'Time', 'Amount', 'ID', 'Comment'];
+const REQUIRED_HEADERS = ['ID', 'Type', 'Time', 'Comment', 'Symbol', 'Amount'];
 
-const parseExcelDateTime = (value: unknown) => {
+const parseExcelDate = (value: unknown) => {
   if (value instanceof Date) {
     return value;
   }
@@ -20,24 +19,7 @@ const parseExcelDateTime = (value: unknown) => {
     );
   }
   if (typeof value === 'string') {
-    const normalized = value.trim();
-    const exactMatch = normalized.match(
-      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?$/,
-    );
-    if (exactMatch) {
-      const [, year, month, day, hours, minutes, seconds = '0'] = exactMatch;
-      return new Date(
-        Date.UTC(
-          Number(year),
-          Number(month) - 1,
-          Number(day),
-          Number(hours),
-          Number(minutes),
-          Number(seconds),
-        ),
-      );
-    }
-    const parsed = new Date(normalized);
+    const parsed = new Date(value);
     if (!Number.isNaN(parsed.valueOf())) {
       return parsed;
     }
@@ -56,41 +38,6 @@ const parseNumericString = (value: string) => {
 
 const sanitizeXtbText = (value: unknown) =>
   typeof value === 'string' ? value.trim() : String(value ?? '').trim();
-
-const extractCurrencyFromXlsxName = (entryName: string) => {
-  const segments = entryName.split('/');
-  const fileName = segments[segments.length - 1] ?? '';
-  const match = fileName.match(/^([A-Z]{3})_/i);
-  return match ? match[1].toUpperCase() : null;
-};
-
-const readXlsxFromZip = async (file: File) => {
-  const zip = await JSZip.loadAsync(await file.arrayBuffer());
-  const xlsxEntries = Object.values(zip.files)
-    .filter((entry) => !entry.dir && /\.xlsx$/i.test(entry.name))
-    .sort((a, b) => a.name.localeCompare(b.name));
-
-  if (xlsxEntries.length === 0) {
-    return {
-      xlsxBuffer: null,
-      entryName: null,
-      warnings: ['ZIP archive does not contain an XLSX file.'],
-    };
-  }
-
-  const warnings: string[] = [];
-  if (xlsxEntries.length > 1) {
-    warnings.push('ZIP archive contains multiple XLSX files; used the first one.');
-  }
-
-  const selectedEntry = xlsxEntries[0];
-  const xlsxBuffer = await selectedEntry.async('arraybuffer');
-  return {
-    xlsxBuffer,
-    entryName: selectedEntry.name,
-    warnings,
-  };
-};
 
 const extractTradeDetails = (comment: string) => {
   const trimmed = comment.trim();
@@ -118,7 +65,6 @@ const extractTradeDetails = (comment: string) => {
 const ACTIVITY_TYPES = {
   BUY: 'BUY',
   SELL: 'SELL',
-  DIVIDEND: 'DIVIDEND',
   INTEREST: 'INTEREST',
   TAX: 'TAX',
   FEE: 'FEE',
@@ -131,24 +77,22 @@ type ActivityTypeValue = (typeof ACTIVITY_TYPES)[keyof typeof ACTIVITY_TYPES];
 const mapActivityType = (value: string, amount: number | null): ActivityTypeValue => {
   const normalized = value.trim().toLowerCase();
   switch (normalized) {
-    case 'stock purchase':
-      return ACTIVITY_TYPES.BUY;
-    case 'stock sale':
-      return ACTIVITY_TYPES.SELL;
-    case 'dividend':
-      return ACTIVITY_TYPES.DIVIDEND;
     case 'free-funds interest':
       return ACTIVITY_TYPES.INTEREST;
     case 'free-funds interest tax':
       return ACTIVITY_TYPES.TAX;
     case 'sec fee':
-    case 'fee':
-    case 'commission':
       return ACTIVITY_TYPES.FEE;
     case 'deposit':
       return ACTIVITY_TYPES.DEPOSIT;
     case 'withdrawal':
       return ACTIVITY_TYPES.WITHDRAWAL;
+    case 'stock purchase':
+      return ACTIVITY_TYPES.BUY;
+    case 'stock sale':
+      return ACTIVITY_TYPES.SELL;
+    case 'close trade':
+      return ACTIVITY_TYPES.SELL;
     default:
       if (amount !== null) {
         return amount >= 0 ? ACTIVITY_TYPES.DEPOSIT : ACTIVITY_TYPES.WITHDRAWAL;
@@ -157,37 +101,34 @@ const mapActivityType = (value: string, amount: number | null): ActivityTypeValu
   }
 };
 
-export class XtbImporter extends BaseImporter {
-  id = 'xtb' as const;
-  label = 'XTB Broker';
-  supportedExtensions = ['zip'];
-  fileNamePattern = /^\d+_\d{4}-\d{2}-\d{2}_\d{4}-\d{2}-\d{2}\.zip$/i;
+export class XtbLegacyImporter extends BaseImporter {
+  id = 'xtb-legacy' as const;
+  label = 'XTB Broker (Legacy)';
+  supportedExtensions = ['xlsx', 'xls'];
+  fileNamePattern = /^account_\d+_[a-z]{2}_xlsx_[^_]+_[^_]+\.xlsx$/i;
 
   async detect(file: File): Promise<ImportDetection | null> {
     if (this.fileNamePattern?.test(file.name)) {
       return {
         sourceId: this.id,
-        confidence: 0.95,
-        reason: 'Filename matches new XTB ZIP export pattern',
+        confidence: 0.9,
+        reason: 'Filename matches legacy XTB export pattern',
       };
     }
     return null;
   }
 
   async parse(file: File, options: ParseOptions): Promise<ImportParseResult> {
-    const { xlsxBuffer, entryName, warnings } = await readXlsxFromZip(file);
-    if (!xlsxBuffer) {
-      return this.finalize([], warnings);
-    }
-
-    const workbook = XLSX.read(xlsxBuffer, { type: 'array', cellDates: true });
-    const sheetName =
-      workbook.SheetNames.find(
-        (name) => this.normalizeHeader(name) === this.normalizeHeader('Cash Operations'),
-      ) ?? workbook.SheetNames[0];
+    const buffer = await file.arrayBuffer();
+    const workbook = XLSX.read(buffer, { type: 'array', cellDates: true });
+    const sheetName = workbook.SheetNames.find(
+      (name) => name.trim().toUpperCase() === 'CASH OPERATION HISTORY',
+    );
 
     if (!sheetName) {
-      return this.finalize([], [...warnings, 'Unable to locate a worksheet in the XLSX file.']);
+      return this.finalize([], [
+        'Missing "CASH OPERATION HISTORY" sheet in the uploaded file.',
+      ]);
     }
 
     const sheet = workbook.Sheets[sheetName];
@@ -224,20 +165,11 @@ export class XtbImporter extends BaseImporter {
     );
 
     const records: ActivityImport[] = [];
-    const parseWarnings = [...warnings];
-    const fileCurrency = entryName ? extractCurrencyFromXlsxName(entryName) : null;
-    const fallbackCurrency = options.accountCurrency || 'USD';
-    const currency = (fileCurrency || fallbackCurrency).toUpperCase();
-    if (!fileCurrency && !options.accountCurrency) {
-      parseWarnings.push('Currency not found in file name; defaulted to USD.');
-    }
-
-    const typeIndex = columnIndex[this.normalizeHeader('Type')];
-    const tickerIndex = columnIndex[this.normalizeHeader('Ticker')];
-    const timeIndex = columnIndex[this.normalizeHeader('Time')];
-    const amountIndex = columnIndex[this.normalizeHeader('Amount')];
-    const commentIndex = columnIndex[this.normalizeHeader('Comment')];
-    const idIndex = columnIndex[this.normalizeHeader('ID')];
+    const warnings: string[] = [];
+    const pendingProfitRows = new Map<
+      string,
+      { amount: number; record: ActivityImport }[]
+    >();
 
     for (let i = headerIndex + 1; i < rows.length; i += 1) {
       const row = rows[i];
@@ -245,44 +177,54 @@ export class XtbImporter extends BaseImporter {
         continue;
       }
 
-      const typeValue = row[typeIndex];
-      const tickerValue = row[tickerIndex];
-      const timeValue = row[timeIndex];
-      const amountValue = row[amountIndex];
-      const commentValue = row[commentIndex];
-      const idValue = row[idIndex];
+      const idValue = row[columnIndex[this.normalizeHeader('ID')]];
+      const typeValue = row[columnIndex[this.normalizeHeader('Type')]];
+      const timeValue = row[columnIndex[this.normalizeHeader('Time')]];
+      const commentValue = row[columnIndex[this.normalizeHeader('Comment')]];
+      const symbolValue = row[columnIndex[this.normalizeHeader('Symbol')]];
+      const amountValue = row[columnIndex[this.normalizeHeader('Amount')]];
 
-      const type = sanitizeXtbText(typeValue);
-      if (type.toLowerCase() === 'total') {
-        continue;
-      }
-
-      const time = parseExcelDateTime(timeValue);
+      const type = typeof typeValue === 'string' ? typeValue.trim() : String(typeValue ?? '').trim();
+      const time = parseExcelDate(timeValue);
       let amount = this.parseAmount(amountValue);
 
-      const rowIsEmpty = !type && !timeValue && !commentValue && !tickerValue && !amountValue;
+      const rowIsEmpty = !type && !timeValue && !commentValue && !symbolValue && !amountValue;
       if (rowIsEmpty) {
         continue;
       }
 
       if (!time || amount === null) {
-        parseWarnings.push(`Skipped row ${i + 1}: missing time or amount.`);
+        warnings.push(`Skipped row ${i + 1}: missing time or amount.`);
         continue;
       }
 
       let activityType = mapActivityType(type || 'Unknown', amount);
+      const rawCurrency = null;
+      const currency = (rawCurrency || options.accountCurrency || 'USD').toUpperCase();
+      if (!rawCurrency && !options.accountCurrency) {
+        warnings.push(`Row ${i + 1}: missing currency, defaulted to USD.`);
+      }
 
-      const rawSymbol = sanitizeXtbText(tickerValue).toUpperCase();
+      const rawSymbol =
+        typeof symbolValue === 'string'
+          ? symbolValue.trim().toUpperCase()
+          : symbolValue
+            ? String(symbolValue).trim().toUpperCase()
+            : '';
       const cashSymbol = `$CASH-${currency.toUpperCase()}`;
       const comment = sanitizeXtbText(commentValue);
       const idText = sanitizeXtbText(idValue);
+      const isProfitOfPosition = /profit of position/i.test(comment);
+      if (isProfitOfPosition) {
+        activityType = amount >= 0 ? ACTIVITY_TYPES.DEPOSIT : ACTIVITY_TYPES.WITHDRAWAL;
+      }
 
       const isTradeActivity =
         activityType === ACTIVITY_TYPES.BUY || activityType === ACTIVITY_TYPES.SELL;
       const symbol = isTradeActivity ? rawSymbol || cashSymbol : cashSymbol;
 
       if (!rawSymbol && isTradeActivity) {
-        parseWarnings.push(`Row ${i + 1}: missing ticker for trade activity.`);
+        warnings.push(`Row ${i + 1}: missing symbol for trade activity.`);
       }
 
       let finalComment =
@@ -296,13 +238,68 @@ export class XtbImporter extends BaseImporter {
           ? `${finalComment} (ID: ${idText})`
           : `ID: ${idText}`;
       }
+      const numericId = Number(idText);
+      const profitMatchId =
+        Number.isFinite(numericId) && Number.isInteger(numericId)
+          ? String(numericId + 1)
+          : '';
+      if (isProfitOfPosition && profitMatchId) {
+        const profitKey = profitMatchId;
+        const pending = pendingProfitRows.get(profitKey) ?? [];
+        pending.push({
+          amount,
+          record: {
+            accountId: options.accountId,
+            activityType,
+            date: time,
+            symbol: cashSymbol,
+            amount,
+            currency,
+            isDraft: true,
+            isValid: true,
+            comment: finalComment,
+            lineNumber: i + 1,
+          },
+        });
+        pendingProfitRows.set(profitKey, pending);
+        continue;
+      }
 
+      const isCloseBuy = /close buy/i.test(comment);
+      let mergedProfit: number | null = null;
+      if (isTradeActivity && idText) {
+        const profitKey = idText;
+        const pending = pendingProfitRows.get(profitKey);
+        if (pending && pending.length > 0) {
+          const match = pending.shift();
+          mergedProfit = match ? match.amount : null;
+          if (pending.length === 0) {
+            pendingProfitRows.delete(profitKey);
+          }
+        }
+      }
+      let reviewErrors: Record<string, string[]> | undefined;
+      if (isCloseBuy && mergedProfit === null) {
+        reviewErrors = { import: ['Missing profit entry for close buy.'] };
+        finalComment = finalComment
+          ? `${finalComment} (Missing profit entry)`
+          : 'Missing profit entry';
+      }
+      if (mergedProfit !== null) {
+        amount += mergedProfit;
+        const profitNote = `Profit: ${mergedProfit}`;
+        finalComment = finalComment
+          ? `${finalComment} (${profitNote})`
+          : profitNote;
+      }
       let { quantity, unitPrice } = isTradeActivity
         ? extractTradeDetails(comment)
         : { quantity: null, unitPrice: null };
       if (isTradeActivity && amount !== null) {
         if (quantity !== null && quantity !== 0) {
           unitPrice = amount / quantity;
+        } else if (unitPrice !== null && unitPrice !== 0) {
+          quantity = amount / unitPrice;
         }
       }
 
@@ -316,12 +313,27 @@ export class XtbImporter extends BaseImporter {
         quantity: quantity ?? undefined,
         unitPrice: unitPrice ?? undefined,
         isDraft: true,
-        isValid: true,
+        isValid: !reviewErrors,
+        errors: reviewErrors,
         comment: finalComment,
         lineNumber: i + 1,
       });
     }
 
-    return this.finalize(records, parseWarnings);
+    for (const pending of pendingProfitRows.values()) {
+      for (const entry of pending) {
+        const pendingComment = entry.record.comment
+          ? `${entry.record.comment} (Missing sale entry)`
+          : 'Missing sale entry';
+        records.push({
+          ...entry.record,
+          comment: pendingComment,
+          isValid: false,
+          errors: { import: ['Missing sale entry for profit record.'] },
+        });
+      }
+    }
+
+    return this.finalize(records, warnings);
   }
 }

@@ -73,6 +73,7 @@ const SOURCE_OPTIONS = [
   { id: 'pekao', label: 'Pekao Investments' },
   { id: 'pekao-accounts', label: 'Pekao Accounts' },
   { id: 'xtb', label: 'XTB Broker' },
+  { id: 'xtb-legacy', label: 'XTB Broker (Legacy)' },
   { id: 'paypal', label: 'PayPal' },
 ];
 

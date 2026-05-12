@@ -120,19 +120,20 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
   );
 
   useEffect(() => {
-    const state = loadQuoteScraperState();
-    if (state.selectedAssetId) {
-      setSelectedAssetId(state.selectedAssetId);
-    }
-    if (state.selectedAssetId && state.configs[state.selectedAssetId]) {
-      const cfg = state.configs[state.selectedAssetId];
-      setUrl(cfg.url ?? '');
-      setCode(cfg.code ?? 'text');
-      setOutputText(cfg.lastLog ?? '');
-      setPreviewText(cfg.lastResultJson ?? '');
-      setNormalizedText(cfg.lastNormalizedJson ?? '');
-    }
-  }, []);
+    loadQuoteScraperState(ctx).then((state) => {
+      if (state.selectedAssetId) {
+        setSelectedAssetId(state.selectedAssetId);
+      }
+      if (state.selectedAssetId && state.configs[state.selectedAssetId]) {
+        const cfg = state.configs[state.selectedAssetId];
+        setUrl(cfg.url ?? '');
+        setCode(cfg.code ?? 'text');
+        setOutputText(cfg.lastLog ?? '');
+        setPreviewText(cfg.lastResultJson ?? '');
+        setNormalizedText(cfg.lastNormalizedJson ?? '');
+      }
+    });
+  }, [ctx]);
 
   useEffect(() => {
     let cancelled = false;
@@ -214,34 +215,35 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
     if (!selectedAssetId) {
       return;
     }
-    const state = loadQuoteScraperState();
-    const cfg = state.configs[selectedAssetId];
+    loadQuoteScraperState(ctx).then((state) => {
+      const cfg = state.configs[selectedAssetId];
 
-    setUrl(cfg?.url ?? '');
-    setCode(cfg?.code ?? 'text');
-    setOutputText(cfg?.lastLog ?? '');
-    setPreviewText(cfg?.lastResultJson ?? '');
-    setNormalizedText(cfg?.lastNormalizedJson ?? '');
+      setUrl(cfg?.url ?? '');
+      setCode(cfg?.code ?? 'text');
+      setOutputText(cfg?.lastLog ?? '');
+      setPreviewText(cfg?.lastResultJson ?? '');
+      setNormalizedText(cfg?.lastNormalizedJson ?? '');
 
-    saveQuoteScraperState({
-      ...state,
-      selectedAssetId,
+      saveQuoteScraperState(ctx, {
+        ...state,
+        selectedAssetId,
+      });
     });
-  }, [selectedAssetId]);
+  }, [selectedAssetId, ctx]);
 
   useEffect(() => {
     if (!selectedAssetId) {
       return;
     }
     const handle = setTimeout(() => {
-      upsertQuoteScraperConfig(selectedAssetId, {
+      upsertQuoteScraperConfig(ctx, selectedAssetId, {
         url,
         code,
       });
     }, 250);
 
     return () => clearTimeout(handle);
-  }, [code, selectedAssetId, url]);
+  }, [code, selectedAssetId, url, ctx]);
 
   const onRunPipeline = async (updateQuotes: boolean) => {
     setRunError(null);
@@ -268,7 +270,7 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
         );
         setRunSuccess(`Updated ${result.updated} quote(s).`);
 
-        upsertQuoteScraperConfig(selectedAssetId, {
+        await upsertQuoteScraperConfig(ctx, selectedAssetId, {
           lastLog: result.log,
           lastResultJson: safeStringify(result.rawResult),
           lastNormalizedJson: safeStringify(
@@ -293,7 +295,7 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
         );
         setRunSuccess('Pipeline executed.');
 
-        upsertQuoteScraperConfig(selectedAssetId, {
+        await upsertQuoteScraperConfig(ctx, selectedAssetId, {
           lastLog: result.log,
           lastResultJson: safeStringify(result.rawResult),
           lastNormalizedJson: safeStringify(
@@ -313,11 +315,29 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
     }
   };
 
+  const handleClearConfig = async () => {
+    if (!selectedAssetId) return;
+    const state = await loadQuoteScraperState(ctx);
+    delete state.configs[selectedAssetId];
+    await saveQuoteScraperState(ctx, state);
+    setUrl('');
+    setCode('text');
+    setOutputText('');
+    setPreviewText('');
+    setNormalizedText('');
+  };
+
   return (
     <Page>
       <PageHeader
         heading="Quote scraper"
         text="Fetch a URL, run JavaScript against the response, preview the result, and update manual quotes."
+        actions={
+          <Button variant="outline" onClick={() => ctx.api.navigation.navigate('/addon/wealthfolio-importer')}>
+            <Icons.ArrowLeft className="mr-2 h-4 w-4" />
+            Back to importer
+          </Button>
+        }
       />
 
       <PageContent>
@@ -455,6 +475,14 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
                       Update quotes
                     </>
                   )}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={handleClearConfig}
+                  disabled={!selectedAssetId || isRunning}
+                >
+                  <Icons.Trash className="mr-2 h-4 w-4" />
+                  Clear config
                 </Button>
               </div>
 

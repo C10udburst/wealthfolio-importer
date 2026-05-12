@@ -158,12 +158,9 @@ const buildQuote = (
   };
 };
 
-export const loadQuoteScraperState = (): QuoteScraperState => {
-  if (typeof window === 'undefined') {
-    return { configs: {} };
-  }
+export const loadQuoteScraperState = async (ctx: AddonContext): Promise<QuoteScraperState> => {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
+    const raw = await ctx.api.secrets.get(STORAGE_KEY);
     if (!raw) {
       return { configs: {} };
     }
@@ -182,18 +179,16 @@ export const loadQuoteScraperState = (): QuoteScraperState => {
   }
 };
 
-export const saveQuoteScraperState = (state: QuoteScraperState) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+export const saveQuoteScraperState = async (ctx: AddonContext, state: QuoteScraperState) => {
+  await ctx.api.secrets.set(STORAGE_KEY, JSON.stringify(state));
 };
 
-export const upsertQuoteScraperConfig = (
+export const upsertQuoteScraperConfig = async (
+  ctx: AddonContext,
   assetId: string,
   update: Partial<StoredConfig>,
 ) => {
-  const state = loadQuoteScraperState();
+  const state = await loadQuoteScraperState(ctx);
   const prev = state.configs[assetId] ?? {
     url: '',
     code: DEFAULT_CODE,
@@ -205,7 +200,7 @@ export const upsertQuoteScraperConfig = (
     url: typeof update.url === 'string' ? update.url : prev.url,
     code: typeof update.code === 'string' ? update.code : prev.code,
   };
-  saveQuoteScraperState(state);
+  await saveQuoteScraperState(ctx, state);
   return state.configs[assetId];
 };
 
@@ -430,7 +425,7 @@ export const startQuoteScraperTracking = (ctx: AddonContext) => {
     if (stopped) {
       return;
     }
-    const state = loadQuoteScraperState();
+    const state = await loadQuoteScraperState(ctx);
     const entries = Object.entries(state.configs ?? {}).filter(
       ([, cfg]) => (cfg.enabled ?? true) && !!cfg.url?.trim(),
     );
@@ -451,7 +446,7 @@ export const startQuoteScraperTracking = (ctx: AddonContext) => {
           cfg.code,
         );
 
-        upsertQuoteScraperConfig(assetId, {
+        await upsertQuoteScraperConfig(ctx, assetId, {
           lastLog: result.log,
           lastResultJson: safeJsonStringify(result.rawResult),
           lastNormalizedJson: safeJsonStringify(

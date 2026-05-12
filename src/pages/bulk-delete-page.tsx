@@ -203,6 +203,22 @@ export default function BulkDeletePage({ ctx }: BulkDeletePageProps) {
     }
   };
 
+  const handleClearSettings = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    setDeleteSuccess(null);
+    try {
+      await ctx.api.secrets.delete('wealthfolio-importer:quote-scraper');
+      await ctx.api.secrets.delete('wealthfolio-importer:symbol-mappings');
+      setDeleteSuccess('Addon settings cleared from secrets API.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to clear settings.';
+      setDeleteError(message);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   return (
     <Page>
       <PageHeader
@@ -346,6 +362,25 @@ export default function BulkDeletePage({ ctx }: BulkDeletePageProps) {
                 onClick={handleDeleteActivities}
               >
                 {isDeleting ? 'Deleting...' : 'Delete activities'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Clear addon settings</CardTitle>
+              <CardDescription>
+                Remove all settings (mappings, scrapers) from the secrets API.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Button
+                variant="destructive"
+                className="w-full"
+                onClick={handleClearSettings}
+                disabled={isDeleting}
+              >
+                Clear all settings
               </Button>
             </CardContent>
           </Card>

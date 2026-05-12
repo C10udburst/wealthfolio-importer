@@ -209,7 +209,7 @@ export default function MappingsPage({ ctx }: MappingsPageProps) {
       const sorted = Array.from(uniqueSymbols).sort((a, b) =>
         a.localeCompare(b),
       );
-      const storedMappings = loadSymbolMappings();
+      const storedMappings = await loadSymbolMappings(ctx);
       const existingRows: MappingRow[] = sorted.map((symbol) => ({
         id: `existing-${normalizeSymbol(symbol)}`,
         from: symbol,
@@ -279,9 +279,9 @@ export default function MappingsPage({ ctx }: MappingsPageProps) {
     return normalizeSymbolMappings(mapping);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     const mapping = buildMappings();
-    saveSymbolMappings(mapping);
+    await saveSymbolMappings(ctx, mapping);
     setSaveStatus(
       Object.keys(mapping).length
         ? `Saved ${Object.keys(mapping).length} mapping(s).`

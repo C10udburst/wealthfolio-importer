@@ -1,3 +1,5 @@
+import type { AddonContext } from '@wealthfolio/addon-sdk';
+
 export const SYMBOL_MAPPING_STORAGE_KEY = 'wealthfolio-importer:symbol-mappings';
 
 export const normalizeSymbol = (value: string) =>
@@ -18,12 +20,9 @@ export const normalizeSymbolMappings = (
   return normalized;
 };
 
-export const loadSymbolMappings = () => {
-  if (typeof window === 'undefined') {
-    return {};
-  }
+export const loadSymbolMappings = async (ctx: AddonContext) => {
   try {
-    const raw = window.localStorage.getItem(SYMBOL_MAPPING_STORAGE_KEY);
+    const raw = await ctx.api.secrets.get(SYMBOL_MAPPING_STORAGE_KEY);
     if (!raw) {
       return {};
     }
@@ -37,12 +36,9 @@ export const loadSymbolMappings = () => {
   }
 };
 
-export const saveSymbolMappings = (mappings: Record<string, string>) => {
-  if (typeof window === 'undefined') {
-    return;
-  }
+export const saveSymbolMappings = async (ctx: AddonContext, mappings: Record<string, string>) => {
   const normalized = normalizeSymbolMappings(mappings);
-  window.localStorage.setItem(
+  await ctx.api.secrets.set(
     SYMBOL_MAPPING_STORAGE_KEY,
     JSON.stringify(normalized),
   );

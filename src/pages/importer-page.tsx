@@ -757,8 +757,8 @@ const isDuplicateMatch = (
   return false;
 };
 
-const applySymbolMappingsToActivities = (activities: ActivityImport[]) => {
-  const mappings = loadSymbolMappings();
+const applySymbolMappingsToActivities = async (ctx: AddonContext, activities: ActivityImport[]) => {
+  const mappings = await loadSymbolMappings(ctx);
   if (!Object.keys(mappings).length) {
     return activities;
   }
@@ -1088,12 +1088,14 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
     setParseError(null);
     importer
       .parse(file, parseOptions)
-      .then((result) => {
+      .then(async (result) => {
         if (cancelled) {
           return;
         }
         setParseResult(result);
-        setActivities(applySymbolMappingsToActivities(result.records));
+        const mapped = await applySymbolMappingsToActivities(ctx, result.records);
+        if (cancelled) return;
+        setActivities(mapped);
         setPageIndex(0);
         setSearchText('');
         setImportError(null);
@@ -1318,6 +1320,102 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
       !isParsing &&
       !isImporting,
   );
+
+  const handleRemoveDuplicates = async () => {
+    if (!selectedAccount || activities.length === 0) {
+      return;
+    }
+
+    setIsImporting(true);
+    setImportError(null);
+    setImportSuccess(null);
+
+    const preparedActivities = activities.map((activity) => {
+      const currency =
+        activity.currency && activity.currency.trim()
+          ? activity.currency.trim()
+          : selectedAccount.currency;
+      const dateValue = activity.date instanceof Date ? activity.date.toISOString() : activity.date;
+      return {
+        ...activity,
+        accountId: selectedAccount.id,
+        currency,
+        symbol: typeof activity.symbol === 'string' ? activity.symbol.trim() : '',
+        date: dateValue ?? '',
+        amount: normalizeImportNumber(activity.amount),
+        quantity: normalizeImportNumber(activity.quantity),
+        unitPrice: normalizeImportNumber(activity.unitPrice),
+        fee: normalizeImportNumber(activity.fee),
+      };
+    });
+
+    try {
+      const existingActivities = await ctx.api.activities.getAll(selectedAccount.id);
+      const existingByAmountAndCurrency = new Map<string, DuplicateMatchCandidate[]>();
+
+      existingActivities.forEach((activity) => {
+        const parsedAmount =
+          typeof activity.amount === 'string' && activity.amount.trim()
+            ? Number(activity.amount)
+            : undefined;
+        const normalizedAmount = Number.isFinite(parsedAmount) ? parsedAmount : undefined;
+        const key = buildAmountCurrencyKey(
+          normalizedAmount,
+          activity.currency,
+          selectedAccount.currency,
+        );
+
+        if (!key) {
+          return;
+        }
+
+        const bucket = existingByAmountAndCurrency.get(key) ?? [];
+        bucket.push({
+          date: activity.date,
+          amount: normalizedAmount,
+          currency: activity.currency,
+          comment: activity.comment ?? undefined,
+        });
+        existingByAmountAndCurrency.set(key, bucket);
+      });
+
+      let skippedExisting = 0;
+      const dedupedActivities = activities.filter((activity, index) => {
+        const prepared = preparedActivities[index];
+        const key = buildAmountCurrencyKey(
+          prepared.amount,
+          prepared.currency,
+          selectedAccount.currency,
+        );
+        if (!key) {
+          return true;
+        }
+
+        const candidates = existingByAmountAndCurrency.get(key);
+        const hasDuplicate = candidates?.some((existing) =>
+          isDuplicateMatch(prepared, existing, selectedAccount.currency),
+        );
+
+        if (hasDuplicate) {
+          skippedExisting += 1;
+          return false;
+        }
+        return true;
+      });
+
+      setActivities(dedupedActivities);
+      if (skippedExisting > 0) {
+        setImportSuccess(`Removed ${skippedExisting} duplicate${skippedExisting === 1 ? '' : 's'}.`);
+      } else {
+        setImportSuccess('No duplicates found.');
+      }
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to remove duplicates.';
+      setImportError(message);
+    } finally {
+      setIsImporting(false);
+    }
+  };
 
   const handleImport = async () => {
     if (!selectedAccount || activities.length === 0) {
@@ -1567,11 +1665,9 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                 }
               : symbolAlreadyExists
                 ? {
-                    // Reference existing assets without forcing quote mode/profile changes.
                     symbol: symbolValue,
                   }
               : {
-                  // Allow importing custom/non-market symbols (e.g., Polish bonds)
                   symbol: symbolValue,
                   kind: 'INVESTMENT',
                   name:
@@ -1947,6 +2043,14 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                   onClick={handleImport}
                 >
                   Import transactions
+                </Button>
+                <Button
+                  variant="outline"
+                  className="w-full"
+                  disabled={!canImport}
+                  onClick={handleRemoveDuplicates}
+                >
+                  Remove duplicates
                 </Button>
                 <Button variant="outline" className="w-full" onClick={handleRemoveFile} disabled={!file}>
                   Start over

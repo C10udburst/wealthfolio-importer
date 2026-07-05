@@ -1652,12 +1652,13 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
             : undefined;
         const symbol: NonNullable<ActivityCreate['symbol']> | undefined = symbolValue
           ? isCashSymbol
-            ? {
+            ? ({
                 symbol: symbolValue,
                 kind: 'FX',
                 name: `Cash ${currencyValue}`,
                 quoteMode: 'MANUAL',
-              }
+                quoteCcy: currencyValue,
+              } as any)
             : resolvedMic
               ? {
                   symbol: symbolValue,
@@ -1667,7 +1668,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                 ? {
                     symbol: symbolValue,
                   }
-              : {
+              : ({
                   symbol: symbolValue,
                   kind: 'INVESTMENT',
                   name:
@@ -1675,7 +1676,8 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                       ? activity.symbolName.trim()
                       : symbolValue,
                   quoteMode: 'MANUAL',
-                }
+                  quoteCcy: currencyValue,
+                } as any)
           : undefined;
 
         const idempotencySeed = [

@@ -1,6 +1,6 @@
 import type { AddonContext } from '@wealthfolio/addon-sdk';
 
-export const SYMBOL_MAPPING_STORAGE_KEY = 'wealthfolio-importer:symbol-mappings';
+export const SYMBOL_MAPPING_STORAGE_KEY = 'wealthfolio-importer.symbol-mappings';
 
 export const normalizeSymbol = (value: string) =>
   value.trim().toUpperCase();

@@ -208,8 +208,8 @@ export default function BulkDeletePage({ ctx }: BulkDeletePageProps) {
     setDeleteError(null);
     setDeleteSuccess(null);
     try {
-      await ctx.api.secrets.delete('wealthfolio-importer:quote-scraper');
-      await ctx.api.secrets.delete('wealthfolio-importer:symbol-mappings');
+      await ctx.api.secrets.delete('wealthfolio-importer.quote-scraper');
+      await ctx.api.secrets.delete('wealthfolio-importer.symbol-mappings');
       setDeleteSuccess('Addon settings cleared from secrets API.');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to clear settings.';

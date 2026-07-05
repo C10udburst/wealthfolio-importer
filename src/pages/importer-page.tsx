@@ -154,11 +154,12 @@ const parseNumberValue = (value: string) => {
   return Number.isNaN(parsed) ? undefined : parsed;
 };
 
-const normalizeImportNumber = (value: number | undefined) => {
+const normalizeImportNumber = (value: number | string | null | undefined) => {
   if (value === undefined || value === null) {
-    return value;
+    return undefined;
   }
-  return Number.isFinite(value) ? Math.abs(value) : value;
+  const num = typeof value === 'string' ? Number(value) : value;
+  return Number.isFinite(num) ? Math.abs(num) : undefined;
 };
 
 const getActivitySymbol = (activity: { assetSymbol?: string; symbol?: string }) =>
@@ -167,8 +168,12 @@ const getActivitySymbol = (activity: { assetSymbol?: string; symbol?: string }) 
 const cn = (...values: Array<string | false | null | undefined>) =>
   values.filter(Boolean).join(' ');
 
-const getNumericCellValue = (value: number | undefined) => {
-  if (value === undefined || Number.isNaN(value)) {
+const getNumericCellValue = (value: number | string | null | undefined) => {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const num = typeof value === 'string' ? Number(value) : value;
+  if (Number.isNaN(num)) {
     return '';
   }
   return String(value);
@@ -192,15 +197,19 @@ const formatDateTimeDisplay = (value: Date | string | undefined) => {
 };
 
 const formatAmountDisplay = (
-  value: number | undefined,
+  value: number | string | null | undefined,
   currency: string | null,
 ) => {
-  if (value === undefined || Number.isNaN(value)) {
+  if (value === undefined || value === null) {
+    return '';
+  }
+  const num = typeof value === 'string' ? Number(value) : value;
+  if (Number.isNaN(num)) {
     return '';
   }
   const resolvedCurrency = currency || 'USD';
   try {
-    return formatAmount(value, resolvedCurrency, false);
+    return formatAmount(num, resolvedCurrency, false);
   } catch {
     return '';
   }
@@ -807,18 +816,18 @@ const getActivityIssues = (
     issues.push('Needs review');
   }
 
-  const amount = activity.amount ?? undefined;
-  const quantity = activity.quantity ?? undefined;
-  const unitPrice = activity.unitPrice ?? undefined;
-  const fee = activity.fee ?? undefined;
+  const amount = activity.amount !== null && activity.amount !== undefined ? Number(activity.amount) : undefined;
+  const quantity = activity.quantity !== null && activity.quantity !== undefined ? Number(activity.quantity) : undefined;
+  const unitPrice = activity.unitPrice !== null && activity.unitPrice !== undefined ? Number(activity.unitPrice) : undefined;
+  const fee = activity.fee !== null && activity.fee !== undefined ? Number(activity.fee) : undefined;
 
   if (TRADE_ACTIVITY_TYPES.has(activityType)) {
-    if (!unitPrice || unitPrice <= 0) {
+    if (unitPrice === undefined || Number.isNaN(unitPrice) || unitPrice <= 0) {
       issues.push('Unit price required for trades');
     }
     if (
-      (quantity === undefined || quantity === 0) &&
-      (amount === undefined || amount === 0)
+      (quantity === undefined || Number.isNaN(quantity) || quantity === 0) &&
+      (amount === undefined || Number.isNaN(amount) || amount === 0)
     ) {
       issues.push('Quantity or amount required for trades');
     }
@@ -1652,13 +1661,12 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
             : undefined;
         const symbol: NonNullable<ActivityCreate['symbol']> | undefined = symbolValue
           ? isCashSymbol
-            ? ({
+            ? {
                 symbol: symbolValue,
                 kind: 'FX',
                 name: `Cash ${currencyValue}`,
                 quoteMode: 'MANUAL',
-                quoteCcy: currencyValue,
-              } as any)
+              }
             : resolvedMic
               ? {
                   symbol: symbolValue,
@@ -1668,7 +1676,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                 ? {
                     symbol: symbolValue,
                   }
-              : ({
+              : {
                   symbol: symbolValue,
                   kind: 'INVESTMENT',
                   name:
@@ -1676,8 +1684,7 @@ export default function ImporterPage({ ctx }: ImporterPageProps) {
                       ? activity.symbolName.trim()
                       : symbolValue,
                   quoteMode: 'MANUAL',
-                  quoteCcy: currencyValue,
-                } as any)
+                }
           : undefined;
 
         const idempotencySeed = [

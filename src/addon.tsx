@@ -13,7 +13,7 @@ export default function enable(ctx: AddonContext) {
   const sidebarItem = ctx.sidebar.addItem({
     id: 'wealthfolio-importer',
     label: 'Wealthfolio Importer',
-    icon: <Icons.Blocks className="h-5 w-5" />,
+    icon: 'blocks',
     route: '/addon/wealthfolio-importer',
     order: 100,
   });
@@ -23,25 +23,25 @@ export default function enable(ctx: AddonContext) {
   ctx.router.add({
     path: '/addon/wealthfolio-importer',
     component: React.lazy(() => Promise.resolve({ default: Wrapper })),
-  });
+  } as any);
 
   const DeleteWrapper = () => <BulkDeletePage ctx={ctx} />;
   ctx.router.add({
     path: '/addon/wealthfolio-importer/delete',
     component: React.lazy(() => Promise.resolve({ default: DeleteWrapper })),
-  });
+  } as any);
 
   const MappingsWrapper = () => <MappingsPage ctx={ctx} />;
   ctx.router.add({
     path: '/addon/wealthfolio-importer/mappings',
     component: React.lazy(() => Promise.resolve({ default: MappingsWrapper })),
-  });
+  } as any);
 
   const QuoteScraperWrapper = () => <QuoteScraperPage ctx={ctx} />;
   ctx.router.add({
     path: '/addon/wealthfolio-importer/quote-scraper',
     component: React.lazy(() => Promise.resolve({ default: QuoteScraperWrapper })),
-  });
+  } as any);
 
   const stopPolishBondTracking = startPolishBondTracking(ctx);
   const stopQuoteScraperTracking = startQuoteScraperTracking(ctx);

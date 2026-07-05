@@ -1,2 +1,6 @@
-onlyBuiltDependencies:
-  - esbuild
+allowBuilds:
+  esbuild: true
+minimumReleaseAgeExclude:
+  - '@wealthfolio/addon-sdk@3.6.0'
+  - '@wealthfolio/ui@3.6.0'
+  - '@wealthfolio/addon-dev-tools@3.6.0'

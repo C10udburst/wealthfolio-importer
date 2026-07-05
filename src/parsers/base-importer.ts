@@ -55,11 +55,12 @@ export abstract class BaseImporter {
   }
 
   protected normalizeRecord(record: ActivityImport) {
-    const normalizeValue = (value: number | undefined) => {
+    const normalizeValue = (value: number | string | null | undefined) => {
       if (value === undefined || value === null) {
-        return value;
+        return undefined;
       }
-      return Number.isFinite(value) ? Math.abs(value) : value;
+      const num = typeof value === 'string' ? Number(value) : value;
+      return Number.isFinite(num) ? Math.abs(num) : undefined;
     };
 
     return {

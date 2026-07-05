@@ -1,6 +1,6 @@
 import type { AddonContext, Asset, Quote } from '@wealthfolio/addon-sdk';
 
-const STORAGE_KEY = 'wealthfolio-importer:quote-scraper';
+const STORAGE_KEY = 'wealthfolio-importer.quote-scraper';
 const DEFAULT_CODE = 'text';
 
 type StoredConfig = {

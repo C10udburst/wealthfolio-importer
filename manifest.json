@@ -5,50 +5,91 @@
   "description": "A Wealthfolio addon for importing data from different sources",
   "author": "Cloudburst",
   "main": "dist/addon.js",
-  "sdkVersion": "3.0.0",
+  "sdkVersion": "3.6.0",
   "enabled": true,
   "permissions": [
     {
       "category": "ui",
-      "functions": ["sidebar.addItem", "router.add"],
+      "functions": [
+        "sidebar.addItem",
+        "router.add"
+      ],
       "purpose": "Register addon routes and sidebar navigation"
     },
     {
       "category": "accounts",
-      "functions": ["getAll"],
+      "functions": [
+        "getAll"
+      ],
       "purpose": "Load account list for importer and bulk delete"
     },
     {
       "category": "activities",
-      "functions": ["getAll", "search", "create", "saveMany", "checkImport", "import"],
+      "functions": [
+        "getAll",
+        "search",
+        "create",
+        "saveMany",
+        "checkImport",
+        "import"
+      ],
       "purpose": "Read, validate, import, and bulk delete activities"
     },
     {
       "category": "portfolio",
-      "functions": ["recalculate", "getHoldings"],
+      "functions": [
+        "recalculate",
+        "getHoldings"
+      ],
       "purpose": "Refresh portfolio stats after bulk deletion and resolve mapped symbols"
     },
     {
       "category": "quotes",
-      "functions": ["update", "getHistory"],
+      "functions": [
+        "update",
+        "getHistory"
+      ],
       "purpose": "Store and validate Polish bond buyback prices"
     },
     {
       "category": "assets",
-      "functions": ["getProfile", "updateProfile", "updateQuoteMode"],
+      "functions": [
+        "getProfile",
+        "updateProfile",
+        "updateQuoteMode"
+      ],
       "purpose": "Set Polish bond metadata (name/display code) and force MANUAL quote mode"
     },
     {
       "category": "events",
-      "functions": ["portfolio.onUpdateComplete"],
+      "functions": [
+        "portfolio.onUpdateComplete",
+        "events.onUpdateComplete",
+        "events.portfolio.onUpdateComplete",
+        "onUpdateComplete"
+      ],
       "purpose": "Detect newly added holdings for Polish bond tracking"
     },
     {
       "category": "market-data",
-      "functions": ["searchTicker"],
+      "functions": [
+        "searchTicker"
+      ],
       "purpose": "Search Yahoo symbols for mapping suggestions"
+    },
+    {
+      "category": "secrets",
+      "functions": [
+        "get",
+        "set",
+        "delete"
+      ],
+      "purpose": "Store quote scraper configurations and symbol mappings securely"
     }
   ],
-  "keywords": ["wealthfolio", "addon"],
+  "keywords": [
+    "wealthfolio",
+    "addon"
+  ],
   "license": "MIT"
 }

@@ -282,7 +282,7 @@ export default function QuoteScraperPage({ ctx }: QuoteScraperPageProps) {
           lastRunAt: new Date().toISOString(),
         });
       } else {
-        const result = await runQuoteScraperPipeline(url, code);
+        const result = await runQuoteScraperPipeline(ctx, url, code);
         setOutputText(result.log);
         setPreviewText(safeStringify(result.rawResult));
         setNormalizedText(

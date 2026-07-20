@@ -6,7 +6,8 @@ export type ImportSourceId =
   | 'pekao-accounts'
   | 'xtb'
   | 'xtb-legacy'
-  | 'paypal';
+  | 'paypal'
+  | 'pko';
 
 export interface ImportParseResult {
   records: ActivityImport[];

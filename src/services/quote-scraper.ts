@@ -228,6 +228,7 @@ const normalizeScriptResult = (result: unknown) => {
 };
 
 export const runQuoteScraperPipeline = async (
+  ctx: AddonContext,
   url: string,
   code: string,
 ): Promise<QuoteScraperPipelineResult> => {
@@ -247,19 +248,25 @@ export const runQuoteScraperPipeline = async (
 
   addLog(`Fetch: ${trimmedUrl}`);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 15000);
-  let response: Response;
-  try {
-    response = await fetch(trimmedUrl, { signal: controller.signal });
-  } finally {
-    clearTimeout(timeout);
-  }
+  const response = await ctx.api.network.request({
+    url: trimmedUrl,
+    method: 'GET',
+  });
 
-  addLog(`HTTP: ${response.status} ${response.statusText}`);
+  addLog(`HTTP: ${response.status}`);
 
-  const contentType = response.headers.get('content-type') ?? '';
-  const text = await response.text();
+  const getHeader = (headers: Record<string, string>, name: string): string => {
+    const target = name.toLowerCase();
+    for (const key of Object.keys(headers || {})) {
+      if (key.toLowerCase() === target) {
+        return headers[key];
+      }
+    }
+    return '';
+  };
+
+  const contentType = getHeader(response.headers, 'content-type');
+  const text = response.body;
   addLog(`Content-Type: ${contentType || '(unknown)'}`);
   addLog(`Body: ${text.length} chars`);
 
@@ -281,10 +288,7 @@ export const runQuoteScraperPipeline = async (
     }
   }
 
-  const headers: Record<string, string> = {};
-  response.headers.forEach((value, key) => {
-    headers[key] = value;
-  });
+  const headers: Record<string, string> = { ...response.headers };
 
   const script = (code || DEFAULT_CODE).trim() || DEFAULT_CODE;
   addLog('JS: executing');
@@ -300,7 +304,7 @@ export const runQuoteScraperPipeline = async (
       text: string;
       json: unknown;
       url: string;
-      response: Response;
+      response: any;
       status: number;
       headers: Record<string, string>;
     }) => unknown;
@@ -309,7 +313,7 @@ export const runQuoteScraperPipeline = async (
       text,
       json,
       url: trimmedUrl,
-      response,
+      response: response as any,
       status: response.status,
       headers,
     });
@@ -374,7 +378,7 @@ export const updateQuotesFromScraper = async (
 
   const currency = profile?.quoteCcy ?? 'USD';
 
-  const pipeline = await runQuoteScraperPipeline(url, code);
+  const pipeline = await runQuoteScraperPipeline(ctx, url, code);
   const normalized = pipeline.normalized;
 
   if (normalized.length === 0) {

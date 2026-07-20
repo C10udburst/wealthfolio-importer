@@ -12,7 +12,7 @@ export default function enable(ctx: AddonContext) {
   // Add a sidebar item
   const sidebarItem = ctx.sidebar.addItem({
     id: 'wealthfolio-importer',
-    label: 'Wealthfolio Importer',
+    label: 'Importer',
     icon: 'blocks',
     route: '/addon/wealthfolio-importer',
     order: 100,

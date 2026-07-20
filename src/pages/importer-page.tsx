@@ -75,6 +75,7 @@ const SOURCE_OPTIONS = [
   { id: 'xtb', label: 'XTB Broker' },
   { id: 'xtb-legacy', label: 'XTB Broker (Legacy)' },
   { id: 'paypal', label: 'PayPal' },
+  { id: 'pko', label: 'PKO Bank Polski' },
 ];
 
 const ACTIVITY_TYPE_OPTIONS = [

@@ -228,41 +228,38 @@ const parseBondSymbol = (symbol: string): BondMatch | null => {
 };
 
 const fetchLatestBondsUrl = async (ctx: AddonContext): Promise<string> => {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 10000);
-  try {
-    const response = await fetch(MAIN_BONDS_PAGE_URL, { signal: controller.signal });
-    if (!response.ok) {
-      throw new Error(`Failed to fetch bonds page: ${response.status} ${response.statusText}`);
-    }
-    const html = await response.text();
-    const doc = new DOMParser().parseFromString(html, 'text/html');
-    const links = Array.from(doc.querySelectorAll('a.file-download'));
+  const response = await ctx.api.network.request({
+    url: MAIN_BONDS_PAGE_URL,
+    method: 'GET',
+  });
+  if (response.status !== 200) {
+    throw new Error(`Failed to fetch bonds page: ${response.status}`);
+  }
+  const html = response.body;
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const links = Array.from(doc.querySelectorAll('a.file-download'));
 
-    for (const link of links) {
-      const ariaLabel = link.getAttribute('aria-label') ?? '';
-      const downloadAttr = link.getAttribute('download') ?? '';
-      const textContent = link.textContent ?? '';
+  for (const link of links) {
+    const ariaLabel = link.getAttribute('aria-label') ?? '';
+    const downloadAttr = link.getAttribute('download') ?? '';
+    const textContent = link.textContent ?? '';
 
-      const textToCheck = [ariaLabel, downloadAttr, textContent].join(' ').toLowerCase();
+    const textToCheck = [ariaLabel, downloadAttr, textContent].join(' ').toLowerCase();
 
-      if (
-        textToCheck.includes('dane_dotyczace_obligacji_detalicznych.xls') ||
-        textToCheck.includes('dane dotyczące obligacji detalicznych plik w formacie xls')
-      ) {
-        const href = link.getAttribute('href');
-        if (href) {
-          const url = href.startsWith('http') ? href : `https://www.gov.pl${href}`;
-          ctx.api.logger.info(`Polish bonds: discovered latest URL: ${url}`);
-          return url;
-        }
+    if (
+      textToCheck.includes('dane_dotyczace_obligacji_detalicznych.xls') ||
+      textToCheck.includes('dane dotyczące obligacji detalicznych plik w formacie xls')
+    ) {
+      const href = link.getAttribute('href');
+      if (href) {
+        const url = href.startsWith('http') ? href : `https://www.gov.pl${href}`;
+        ctx.api.logger.info(`Polish bonds: discovered latest URL: ${url}`);
+        return url;
       }
     }
-
-    throw new Error('Could not find the bonds data file link on the page.');
-  } finally {
-    clearTimeout(timeout);
   }
+
+  throw new Error('Could not find the bonds data file link on the page.');
 };
 
 const getWorkbook = async (ctx: AddonContext) => {
@@ -270,19 +267,16 @@ const getWorkbook = async (ctx: AddonContext) => {
     return workbookPromise;
   }
   workbookPromise = (async () => {
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 20000);
-    try {
-      const bondsUrl = await fetchLatestBondsUrl(ctx);
-      const response = await fetch(bondsUrl, { signal: controller.signal });
-      if (!response.ok) {
-        throw new Error(`Download failed: ${response.status} ${response.statusText}`);
-      }
-      const fileData = await response.arrayBuffer();
-      return XLSX.read(fileData, { cellDates: true });
-    } finally {
-      clearTimeout(timeout);
+    const bondsUrl = await fetchLatestBondsUrl(ctx);
+    const response = await ctx.api.network.request({
+      url: bondsUrl,
+      method: 'GET',
+    });
+    if (response.status !== 200) {
+      throw new Error(`Download failed: ${response.status}`);
     }
+    const fileData = response.body;
+    return XLSX.read(fileData, { type: 'binary', cellDates: true });
   })();
 
   try {

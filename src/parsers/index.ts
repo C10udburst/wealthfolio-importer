@@ -2,11 +2,13 @@ import { IngImporter } from './ing-importer';
 import { PayPalImporter } from './paypal-importer';
 import { PekaoAccountsImporter } from './pekao-accounts-importer';
 import { PekaoInvestmentsImporter } from './pekao-investments-importer';
+import { PkoImporter } from './pko-importer';
 import { XtbImporter } from './xtb-importer';
 import { XtbLegacyImporter } from './xtb-legacy-importer';
 import type { ImportDetection, ImportSourceId } from './types';
 
 const importers = [
+  new PkoImporter(),
   new IngImporter(),
   new PekaoAccountsImporter(),
   new PekaoInvestmentsImporter(),

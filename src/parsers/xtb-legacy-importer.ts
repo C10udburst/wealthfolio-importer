@@ -74,9 +74,30 @@ const ACTIVITY_TYPES = {
 
 type ActivityTypeValue = (typeof ACTIVITY_TYPES)[keyof typeof ACTIVITY_TYPES];
 
-const mapActivityType = (value: string, amount: number | null): ActivityTypeValue => {
-  const normalized = value.trim().toLowerCase();
-  switch (normalized) {
+const mapActivityType = (
+  value: string,
+  comment: string = '',
+  amount: number | null = null,
+): ActivityTypeValue => {
+  const normType = value.trim().toLowerCase();
+  const normComment = comment.trim().toLowerCase();
+  const combined = `${normType} ${normComment}`;
+
+  if (
+    /free[\s-_]?funds\s+interest\s*(?:-|–)?\s*tax/i.test(combined) ||
+    /tax.*free[\s-_]?funds\s+interest/i.test(combined) ||
+    /podatek.*(?:oprocentowan|wolnych\s*środk|wolnych\s*srodk)/i.test(combined)
+  ) {
+    return ACTIVITY_TYPES.TAX;
+  }
+  if (
+    /free[\s-_]?funds\s+interest/i.test(combined) ||
+    /(?:oprocentowan|odsetk).*wolnych\s*(?:środk|srodk)/i.test(combined)
+  ) {
+    return ACTIVITY_TYPES.INTEREST;
+  }
+
+  switch (normType) {
     case 'free-funds interest':
       return ACTIVITY_TYPES.INTEREST;
     case 'free-funds interest tax':
@@ -90,7 +111,6 @@ const mapActivityType = (value: string, amount: number | null): ActivityTypeValu
     case 'stock purchase':
       return ACTIVITY_TYPES.BUY;
     case 'stock sale':
-      return ACTIVITY_TYPES.SELL;
     case 'close trade':
       return ACTIVITY_TYPES.SELL;
     default:
@@ -198,7 +218,8 @@ export class XtbLegacyImporter extends BaseImporter {
         continue;
       }
 
-      let activityType = mapActivityType(type || 'Unknown', amount);
+      const comment = sanitizeXtbText(commentValue);
+      let activityType = mapActivityType(type || 'Unknown', comment, amount);
       const rawCurrency = null;
       const currency = (rawCurrency || options.accountCurrency || 'USD').toUpperCase();
       if (!rawCurrency && !options.accountCurrency) {
@@ -212,7 +233,6 @@ export class XtbLegacyImporter extends BaseImporter {
             ? String(symbolValue).trim().toUpperCase()
             : '';
       const cashSymbol = `$CASH-${currency.toUpperCase()}`;
-      const comment = sanitizeXtbText(commentValue);
       const idText = sanitizeXtbText(idValue);
       const isProfitOfPosition = /profit of position/i.test(comment);
       if (isProfitOfPosition) {

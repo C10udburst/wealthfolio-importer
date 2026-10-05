@@ -212,9 +212,30 @@ const ACTIVITY_TYPES = {
 
 type ActivityTypeValue = (typeof ACTIVITY_TYPES)[keyof typeof ACTIVITY_TYPES];
 
-const mapActivityType = (value: string, amount: number | null): ActivityTypeValue => {
-  const normalized = value.trim().toLowerCase();
-  switch (normalized) {
+const mapActivityType = (
+  type: string,
+  comment: string = '',
+  amount: number | null = null,
+): ActivityTypeValue => {
+  const normType = type.trim().toLowerCase();
+  const normComment = comment.trim().toLowerCase();
+  const combined = `${normType} ${normComment}`;
+
+  if (
+    /free[\s-_]?funds\s+interest\s*(?:-|–)?\s*tax/i.test(combined) ||
+    /tax.*free[\s-_]?funds\s+interest/i.test(combined) ||
+    /podatek.*(?:oprocentowan|wolnych\s*środk|wolnych\s*srodk)/i.test(combined)
+  ) {
+    return ACTIVITY_TYPES.TAX;
+  }
+  if (
+    /free[\s-_]?funds\s+interest/i.test(combined) ||
+    /(?:oprocentowan|odsetk).*wolnych\s*(?:środk|srodk)/i.test(combined)
+  ) {
+    return ACTIVITY_TYPES.INTEREST;
+  }
+
+  switch (normType) {
     case 'stock purchase':
       return ACTIVITY_TYPES.BUY;
     case 'stock sale':
@@ -373,11 +394,11 @@ export class XtbImporter extends BaseImporter {
         continue;
       }
 
-      const activityType = mapActivityType(type || 'Unknown', amount);
+      const comment = sanitizeXtbText(commentValue);
+      const activityType = mapActivityType(type || 'Unknown', comment, amount);
 
       const rawSymbol = sanitizeXtbText(tickerValue || instrumentValue).toUpperCase();
       const cashSymbol = `$CASH-${currency.toUpperCase()}`;
-      const comment = sanitizeXtbText(commentValue);
       const idText = sanitizeXtbText(idValue);
 
       const isTradeActivity =

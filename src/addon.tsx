@@ -5,7 +5,6 @@ import BulkDeletePage from './pages/bulk-delete-page';
 import ImporterPage from './pages/importer-page';
 import MappingsPage from './pages/mappings-page';
 import QuoteScraperPage from './pages/quote-scraper-page';
-import { startPolishBondTracking } from './services/polish-bonds';
 import { startQuoteScraperTracking } from './services/quote-scraper';
 
 export default function enable(ctx: AddonContext) {
@@ -43,18 +42,10 @@ export default function enable(ctx: AddonContext) {
     component: React.lazy(() => Promise.resolve({ default: QuoteScraperWrapper })),
   } as any);
 
-  const stopPolishBondTracking = startPolishBondTracking(ctx);
   const stopQuoteScraperTracking = startQuoteScraperTracking(ctx);
 
   // Cleanup on disable
   ctx.onDisable(() => {
-    try {
-      stopPolishBondTracking();
-    } catch (err) {
-      ctx.api.logger.error(
-        `Failed to stop bond tracking: ${err instanceof Error ? err.message : String(err)}`,
-      );
-    }
     try {
       stopQuoteScraperTracking();
     } catch (err) {

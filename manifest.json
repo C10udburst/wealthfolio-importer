@@ -38,10 +38,9 @@
     {
       "category": "portfolio",
       "functions": [
-        "recalculate",
-        "getHoldings"
+        "recalculate"
       ],
-      "purpose": "Refresh portfolio stats after bulk deletion and resolve mapped symbols"
+      "purpose": "Refresh portfolio stats after bulk deletion and import"
     },
     {
       "category": "quotes",
@@ -49,26 +48,15 @@
         "update",
         "getHistory"
       ],
-      "purpose": "Store and validate Polish bond buyback prices"
+      "purpose": "Store and read scraped quotes for configured symbols"
     },
     {
       "category": "assets",
       "functions": [
         "getProfile",
-        "updateProfile",
         "updateQuoteMode"
       ],
-      "purpose": "Set Polish bond metadata (name/display code) and force MANUAL quote mode"
-    },
-    {
-      "category": "events",
-      "functions": [
-        "portfolio.onUpdateComplete",
-        "events.onUpdateComplete",
-        "events.portfolio.onUpdateComplete",
-        "onUpdateComplete"
-      ],
-      "purpose": "Detect newly added holdings for Polish bond tracking"
+      "purpose": "Inspect assets and force MANUAL quote mode for scraped symbols"
     },
     {
       "category": "market-data",
@@ -91,13 +79,11 @@
       "functions": [
         "request"
       ],
-      "purpose": "Fetch Polish retail bond rates and user-configured quote sources"
+      "purpose": "Fetch user-configured quote sources"
     }
   ],
   "network": {
     "allowedHosts": [
-      "www.gov.pl",
-      "*.gov.pl",
       "*"
     ]
   },
